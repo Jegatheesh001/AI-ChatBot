@@ -390,6 +390,11 @@
                 chatHistory[sessionId] = { timestamp: Date.now(), title: 'New Conversation', messages: [] };
             }
 
+            if (role === 'user') {
+                // Only update the timestamp when the user sends a message
+                chatHistory[sessionId].timestamp = Date.now();
+            }
+
             let messageContent;
             if (role === 'user' && files.length > 0) {
                 const fileDataURLs = await Promise.all(files.map(fileToDataURL));
@@ -403,7 +408,6 @@
             
             const message = { id: msgId, role, content: messageContent };
 
-            // Check if a message with the same ID already exists and replace it, otherwise push a new one
             const existingMsgIndex = chatHistory[sessionId].messages.findIndex(m => m.id === msgId);
             if (existingMsgIndex > -1) {
                 chatHistory[sessionId].messages[existingMsgIndex] = message;
@@ -423,26 +427,38 @@
         function updateSidebarTitle(text) {
             const session = chatHistory[sessionId];
             // Only update the title if it's a new conversation (or has the default title)
-            if (session && (session.messages.length <= 1 || session.title === 'New Conversation')) {
-                const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
-                session.title = newTitle;
-                localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
-                renderSidebar();
+            if (session && session.messages.length > 1) {
+                return;
             }
+            const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
+            session.title = newTitle;
+            localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
+            renderSidebar();
         }
         function renderSidebar() {
-            const list = document.getElementById('history-list'); list.innerHTML = '';
-            Object.entries(chatHistory).sort((a,b) => b[1].timestamp - a[1].timestamp).forEach(([id, s]) => {
-                const active = id === sessionId ? 'bg-gray-800 text-white' : 'hover:bg-gray-800/50 text-gray-500';
-                list.insertAdjacentHTML('beforeend', `<button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}"><i class="ph ph-chat-centered-text mr-2"></i> ${s.title}</button>`);
+            const list = document.getElementById('history-list');
+            list.innerHTML = '';
+            const sortedChats = Object.entries(chatHistory).sort((a, b) => b[1].timestamp - a[1].timestamp);
+            
+            sortedChats.forEach(([id, s]) => {
+                const active = id === sessionId ? 'bg-gray-700 text-white' : 'hover:bg-gray-800/50 text-gray-500';
+                const buttonHtml = `
+                    <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
+                        <i class="ph ph-chat-centered-text mr-2"></i> 
+                        ${s.title}
+                    </button>
+                `;
+                list.insertAdjacentHTML('beforeend', buttonHtml);
             });
+
+            // Scroll to the top of the list
+            list.scrollTop = 0;
         }
         
         function loadSession(id) {
             sessionId = id;
             const container = document.getElementById('messages-container');
             
-            // Revoke any existing object URLs before loading the new session
             container.querySelectorAll('img').forEach(img => {
                 if (img.src.startsWith('blob:')) {
                     URL.revokeObjectURL(img.src);
@@ -453,17 +469,31 @@
             const emptyState = document.getElementById('empty-state');
             if(emptyState) emptyState.style.display = 'none';
 
-            chatHistory[id].messages.forEach(m => {
-                let text = '', files = [];
-                if (Array.isArray(m.content)) { // Handle multi-part content (text + images)
-                    text = m.content.find(p => p.type === 'text')?.text || '';
-                    files = m.content.filter(p => p.type === 'image_url').map(p => p.image_url.url);
-                } else { // Handle simple text content
-                    text = m.content;
+            const session = chatHistory[id];
+            if (session) {
+                session.messages.forEach(m => {
+                    let text = '', files = [];
+                    if (Array.isArray(m.content)) {
+                        text = m.content.find(p => p.type === 'text')?.text || '';
+                        files = m.content.filter(p => p.type === 'image_url').map(p => p.image_url.url);
+                    } else {
+                        text = m.content;
+                    }
+                    addMessageToUI(m.role, text, files);
+                });
+            }
+            
+            // Manually update active class in sidebar without re-rendering
+            const historyButtons = document.querySelectorAll('#history-list button');
+            historyButtons.forEach(btn => {
+                if (btn.getAttribute('onclick') === `loadSession('${id}')`) {
+                    btn.classList.add('bg-gray-700', 'text-white');
+                    btn.classList.remove('hover:bg-gray-800/50', 'text-gray-500');
+                } else {
+                    btn.classList.remove('bg-gray-700', 'text-white');
+                    btn.classList.add('hover:bg-gray-800/50', 'text-gray-500');
                 }
-                addMessageToUI(m.role, text, files);
             });
-            renderSidebar();
         }
 
         // --- UTILITY FUNCTIONS ---
