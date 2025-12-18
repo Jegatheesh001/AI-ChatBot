@@ -242,7 +242,15 @@
 
         function startNewChat() {
             sessionId = generateUUID();
-            document.getElementById('messages-container').innerHTML = `
+            const container = document.getElementById('messages-container');
+            
+            // Revoke any existing object URLs before starting a new chat
+            container.querySelectorAll('img').forEach(img => {
+                if (img.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.src);
+                }
+            });
+            container.innerHTML = `
                 <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-300">
                     <div class="p-6 bg-white rounded-full shadow-sm mb-4 border border-gray-100">
                         <i class="ph ph-chat-circle-dots text-5xl text-indigo-200"></i>
@@ -250,24 +258,36 @@
                     <p class="text-xl font-medium text-gray-400">How can I help you today?</p>
                 </div>
             `;
+            // Clear any existing files from a previous session
+            currentFiles = [];
+            updateFilePreview();
+            
             renderSidebar();
             document.getElementById('user-input').focus();
         }
 
         async function sendMessage() {
-            const input = document.getElementById('user-input'), text = input.value.trim();
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
             if (!text && currentFiles.length === 0) return;
 
-            input.value = ''; input.style.height = 'auto';
+            const filesToSend = [...currentFiles];
+            const userMsgId = addMessageToUI('user', text, filesToSend);
+
+            currentFiles = [];
+            updateFilePreview();
+            input.value = '';
+            input.style.height = 'auto';
+
+            // Wait for history to be saved with data URLs before proceeding
+            await saveToHistory('user', text, filesToSend, userMsgId);
+
             const emptyState = document.getElementById('empty-state');
             if (emptyState) emptyState.style.display = 'none';
 
-            addMessageToUI('user', text, currentFiles);
-            saveToHistory('user', text, currentFiles);
-
             const payload = {
                 session_id: sessionId,
-                messages: getSessionMessages(),
+                messages: getSessionMessages(), // Now gets messages with data URLs
                 settings: {
                     openai_model: configSettings.model,
                     openai_api_key: configSettings.apiKey,
@@ -275,8 +295,7 @@
                     mcp_command: configSettings.mcpCommand
                 }
             };
-            currentFiles = [];
-
+            
             const assistantMsgId = addMessageToUI('assistant', '', []);
             const contentDiv = document.getElementById(assistantMsgId).querySelector('.markdown-body');
             let fullResponse = "";
@@ -291,16 +310,19 @@
                 if (!response.ok) {
                     const err = await response.json();
                     contentDiv.innerHTML = `<p class="text-red-500 font-bold">Error: ${err.detail || 'Request failed'}</p>`;
+                    await saveToHistory('assistant', contentDiv.innerHTML, [], assistantMsgId);
                     return;
                 }
 
-                const reader = response.body.getReader(), decoder = new TextDecoder();
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
                 let buffer = '';
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     buffer += decoder.decode(value, { stream: true });
-                    const lines = buffer.split('\n'); buffer = lines.pop(); 
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); 
                     for (const line of lines) {
                         if (!line.trim()) continue;
                         try {
@@ -323,16 +345,29 @@
                         } catch (e) {}
                     }
                 }
-                saveToHistory('assistant', fullResponse);
+                await saveToHistory('assistant', fullResponse, [], assistantMsgId);
                 updateSidebarTitle(text);
-            } catch (err) { contentDiv.innerHTML = `<p class="text-red-500">Network Error: ${err.message}</p>`; }
-            document.getElementById('send-btn').disabled = false;
+            } catch (err) { 
+                contentDiv.innerHTML = `<p class="text-red-500">Network Error: ${err.message}</p>`; 
+                await saveToHistory('assistant', contentDiv.innerHTML, [], assistantMsgId);
+            } finally {
+                document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
+            }
         }
 
         function addMessageToUI(role, text, files = []) {
-            const container = document.getElementById('messages-container'), msgId = 'msg-' + Date.now();
+            const container = document.getElementById('messages-container');
+            const msgId = 'msg-' + Date.now();
             const isUser = role === 'user';
-            let filesHtml = files.length ? `<div class="flex gap-2 mb-2 flex-wrap">` + files.map(f => `<img src="${f}" class="h-32 w-auto max-w-full object-contain rounded-xl border border-gray-200">`).join('') + `</div>` : '';
+
+            const filesHtml = files.length ? 
+                `<div class="flex gap-2 mb-2 flex-wrap">` + 
+                files.map(f => {
+                    // If f is a File object, create an object URL; otherwise, it's a data URL from history
+                    const src = (typeof f === 'object' && f instanceof File) ? URL.createObjectURL(f) : f;
+                    return `<img src="${src}" class="h-32 w-auto max-w-full object-contain rounded-xl border border-gray-200">`;
+                }).join('') + `</div>` : '';
+
             const html = `<div class="flex ${isUser ? 'justify-end' : 'justify-start'} w-full animate-in fade-in slide-in-from-bottom-2 duration-300" id="${msgId}">
                 <div class="max-w-[85%] md:max-w-[75%] lg:max-w-[65%]">
                     <div class="flex items-center gap-2 mb-1 ${isUser ? 'flex-row-reverse' : ''}">
@@ -344,18 +379,57 @@
                 </div>
             </div>`;
             container.insertAdjacentHTML('beforeend', html);
-            scrollToBottom(); return msgId;
+            scrollToBottom();
+            return msgId;
         }
 
         function scrollToBottom() { const c = document.getElementById('messages-container'); if (c) requestAnimationFrame(() => c.scrollTop = c.scrollHeight); }
-        function saveToHistory(role, content, files = []) {
-            if (!chatHistory[sessionId]) chatHistory[sessionId] = { timestamp: Date.now(), title: 'New Conversation', messages: [] };
-            let stored = role === 'user' && files.length ? [{ type: "text", text: content }, ...files.map(f => ({ type: "image_url", image_url: { url: f } }))] : content;
-            chatHistory[sessionId].messages.push({ role, content: stored });
+
+        async function saveToHistory(role, content, files = [], msgId) {
+            if (!chatHistory[sessionId]) {
+                chatHistory[sessionId] = { timestamp: Date.now(), title: 'New Conversation', messages: [] };
+            }
+
+            let messageContent;
+            if (role === 'user' && files.length > 0) {
+                const fileDataURLs = await Promise.all(files.map(fileToDataURL));
+                messageContent = [
+                    { type: "text", text: content },
+                    ...fileDataURLs.map(url => ({ type: "image_url", image_url: { url } }))
+                ];
+            } else {
+                messageContent = content;
+            }
+            
+            const message = { id: msgId, role, content: messageContent };
+
+            // Check if a message with the same ID already exists and replace it, otherwise push a new one
+            const existingMsgIndex = chatHistory[sessionId].messages.findIndex(m => m.id === msgId);
+            if (existingMsgIndex > -1) {
+                chatHistory[sessionId].messages[existingMsgIndex] = message;
+            } else {
+                chatHistory[sessionId].messages.push(message);
+            }
+
             localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
         }
-        function getSessionMessages() { return chatHistory[sessionId]?.messages.map(m => ({ role: m.role, content: m.content })) || []; }
-        function updateSidebarTitle(text) { if (chatHistory[sessionId]?.messages.length <= 2) { chatHistory[sessionId].title = text.substring(0, 30) + '...'; localStorage.setItem('chat_sessions', JSON.stringify(chatHistory)); renderSidebar(); } }
+
+        function getSessionMessages() {
+            const session = chatHistory[sessionId];
+            if (!session) return [];
+            // Use structuredClone to deep-copy messages, ensuring the original array is not modified.
+            return structuredClone(session.messages);
+        }
+        function updateSidebarTitle(text) {
+            const session = chatHistory[sessionId];
+            // Only update the title if it's a new conversation (or has the default title)
+            if (session && (session.messages.length <= 1 || session.title === 'New Conversation')) {
+                const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
+                session.title = newTitle;
+                localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
+                renderSidebar();
+            }
+        }
         function renderSidebar() {
             const list = document.getElementById('history-list'); list.innerHTML = '';
             Object.entries(chatHistory).sort((a,b) => b[1].timestamp - a[1].timestamp).forEach(([id, s]) => {
@@ -363,11 +437,118 @@
                 list.insertAdjacentHTML('beforeend', `<button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}"><i class="ph ph-chat-centered-text mr-2"></i> ${s.title}</button>`);
             });
         }
-        function loadSession(id) { sessionId = id; document.getElementById('messages-container').innerHTML = ''; document.getElementById('empty-state').style.display = 'none'; chatHistory[id].messages.forEach(m => { let t = m.content, f = []; if (Array.isArray(m.content)) { t = m.content.find(c => c.type === 'text')?.text || ''; f = m.content.filter(c => c.type === 'image_url').map(c => c.image_url.url); } addMessageToUI(m.role, t, f); }); renderSidebar(); }
+        
+        function loadSession(id) {
+            sessionId = id;
+            const container = document.getElementById('messages-container');
+            
+            // Revoke any existing object URLs before loading the new session
+            container.querySelectorAll('img').forEach(img => {
+                if (img.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.src);
+                }
+            });
+            container.innerHTML = '';
+
+            const emptyState = document.getElementById('empty-state');
+            if(emptyState) emptyState.style.display = 'none';
+
+            chatHistory[id].messages.forEach(m => {
+                let text = '', files = [];
+                if (Array.isArray(m.content)) { // Handle multi-part content (text + images)
+                    text = m.content.find(p => p.type === 'text')?.text || '';
+                    files = m.content.filter(p => p.type === 'image_url').map(p => p.image_url.url);
+                } else { // Handle simple text content
+                    text = m.content;
+                }
+                addMessageToUI(m.role, text, files);
+            });
+            renderSidebar();
+        }
+
+        // --- UTILITY FUNCTIONS ---
         function generateUUID() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0, v=c=='x'?r:(r&0x3|0x8); return v.toString(16); }); }
-        function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; document.getElementById('send-btn').disabled = el.value.trim() === ''; }
+        
+        function fileToDataURL(file) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+        function autoResize(el) {
+            el.style.height = 'auto';
+            el.style.height = el.scrollHeight + 'px';
+            document.getElementById('send-btn').disabled = el.value.trim() === '' && currentFiles.length === 0;
+        }
         function handleEnter(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
-        function handleFileSelect(e) { /* File logic here */ }
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!files) return;
+
+            for (const file of files) {
+                if (file.type.startsWith('image/')) {
+                    currentFiles.push(file);
+                }
+            }
+            updateFilePreview();
+            event.target.value = ''; // Reset to allow re-selecting the same file
+        }
+
+        function updateFilePreview() {
+            const previewContainer = document.getElementById('file-preview');
+            // Revoke previous object URLs to prevent memory leaks
+            previewContainer.querySelectorAll('img').forEach(img => {
+                if (img.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(img.src);
+                }
+            });
+            previewContainer.innerHTML = '';
+
+            if (currentFiles.length === 0) {
+                previewContainer.classList.add('hidden');
+                return;
+            }
+            
+            previewContainer.classList.remove('hidden');
+            currentFiles.forEach((file, index) => {
+                const imgElement = document.createElement('img');
+                // Create a temporary URL for the file
+                imgElement.src = URL.createObjectURL(file);
+                imgElement.className = "h-20 w-auto object-contain rounded-lg border border-gray-300 bg-gray-100";
+                
+                const removeBtn = document.createElement('button');
+                removeBtn.innerHTML = '&times;';
+                removeBtn.className = "absolute top-0 right-0 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs font-bold";
+                removeBtn.onclick = () => removeFile(index);
+
+                const wrapper = document.createElement('div');
+                wrapper.className = "relative flex-shrink-0";
+                wrapper.appendChild(imgElement);
+                wrapper.appendChild(removeBtn);
+
+                previewContainer.appendChild(wrapper);
+            });
+            document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
+        }
+
+        function removeFile(index) {
+            currentFiles.splice(index, 1);
+            updateFilePreview();
+        }
+
+        document.getElementById('user-input').addEventListener('paste', (event) => {
+            const items = (event.clipboardData || event.originalEvent.clipboardData).items;
+            for (const item of items) {
+                if (item.kind === 'file' && item.type.startsWith('image/')) {
+                    event.preventDefault();
+                    const file = item.getAsFile();
+                    currentFiles.push(file);
+                    updateFilePreview();
+                }
+            }
+        });
     </script>
 </body>
 </html>
