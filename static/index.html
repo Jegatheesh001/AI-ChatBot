@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MCP Chat Interface</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        #messages-container > div { margin-top: 2px !important; margin-bottom: 2px !important; }
+        .markdown-body p { margin-bottom: 2px !important; line-height: 1.5; }
+        .markdown-body pre { background: #1e293b; color: #fff; padding: 12px; border-radius: 8px; overflow-x: auto; margin: 4px 0; }
+        .markdown-body code { font-family: 'ui-monospace', monospace; background: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+
+        /* Sidebar Transitions */
+        #sidebar { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden; }
+        #main-content { transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+        /* Slim Sidebar State Classes */
+        .sidebar-slim { width: 64px !important; }
+        .sidebar-expanded { width: 288px !important; } /* 72 units in Tailwind */
+
+        .content-slim { margin-left: 64px !important; }
+        .content-expanded { margin-left: 288px !important; }
+
+        .hide-slim { transition: opacity 0.2s; }
+        .sidebar-slim .hide-slim { opacity: 0; pointer-events: none; display: none; }
+        
+        .show-slim { display: none; }
+        .sidebar-slim .show-slim { display: flex; }
+    </style>
+</head>
+<body class="bg-gray-50 h-screen max-h-screen overflow-hidden flex text-slate-800 font-sans">
+
+    <div id="sidebar" class="sidebar-expanded bg-gray-900 text-gray-300 flex flex-col fixed z-30 h-full shadow-xl">
+        
+        <div class="p-5 border-b border-gray-800 flex items-center min-h-[73px]">
+            <button onclick="toggleSidebar()" class="text-gray-400 hover:text-white transition-colors flex-shrink-0">
+                <i class="ph ph-list text-2xl"></i>
+            </button>
+            <h1 class="hide-slim font-bold text-white text-lg flex items-center gap-2 ml-3 whitespace-nowrap">
+                <i class="ph-fill ph-sparkle text-indigo-400"></i> AI Assistant
+            </h1>
+        </div>
+
+        <div class="p-4 flex flex-col items-center">
+            <button onclick="startNewChat()" class="hide-slim w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition-all shadow-lg active:scale-95">
+                <i class="ph ph-plus-bold"></i> New Chat
+            </button>
+            <button onclick="startNewChat()" class="show-slim text-gray-400 hover:text-white p-2 mt-2 transition-colors" title="New Chat">
+                <i class="ph ph-note-pencil text-2xl"></i>
+            </button>
+        </div>
+
+        <div class="hide-slim flex-1 overflow-y-auto px-3 space-y-1" id="history-list"></div>
+
+        <div class="mt-auto p-4 border-t border-gray-800 flex flex-col items-center gap-4">
+            <div class="hide-slim w-full text-xs text-gray-500 flex items-center gap-2">
+                <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                System Online
+            </div>
+            <button class="show-slim text-gray-400 hover:text-white transition-colors mb-2" title="Settings">
+                <i class="ph ph-gear text-2xl"></i>
+            </button>
+        </div>
+    </div>
+
+    <div id="main-content" class="content-expanded flex-1 flex flex-col h-full max-h-screen overflow-hidden relative">
+        
+        <div id="messages-container" class="flex-1 flex flex-col overflow-y-auto p-4 md:p-8 space-y-1 min-h-0">
+            <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-300">
+                <div class="p-6 bg-white rounded-full shadow-sm mb-4 border border-gray-100">
+                    <i class="ph ph-chat-circle-dots text-5xl text-indigo-200"></i>
+                </div>
+                <p class="text-xl font-medium text-gray-400">How can I help you today?</p>
+            </div>
+        </div>
+
+        <div class="bg-white border-t border-gray-200 p-4 w-full z-20">
+            <div class="max-w-4xl mx-auto">
+                <div id="file-preview" class="flex gap-3 mb-3 overflow-x-auto hidden px-2"></div>
+
+                <div class="bg-white rounded-2xl border border-gray-300 p-2 transition-all focus-within:ring-4 focus-within:ring-indigo-100 focus-within:border-indigo-400 flex items-end">
+                    
+                    <button onclick="document.getElementById('file-input').click()" class="p-3 text-gray-400 hover:text-indigo-600 transition-colors" title="Attach Files">
+                        <i class="ph ph-paperclip text-2xl"></i>
+                    </button>
+                    <input type="file" id="file-input" class="hidden" multiple onchange="handleFileSelect(event)">
+
+                    <textarea 
+                        id="user-input" 
+                        rows="1" 
+                        placeholder="Message Assistant... (Ctrl+V for images)" 
+                        class="w-full bg-transparent border-none outline-none focus:ring-0 focus:outline-none p-3 max-h-48 resize-none text-gray-700 leading-relaxed text-lg"
+                        oninput="autoResize(this)"
+                        onkeydown="handleEnter(event)"
+                    ></textarea>
+
+                    <button id="send-btn" onclick="sendMessage()" class="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all disabled:opacity-30 m-1 shadow-md active:scale-95" disabled>
+                        <i class="ph-fill ph-paper-plane-right text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let sessionId = generateUUID();
+        let currentFiles = [];
+        let chatHistory = JSON.parse(localStorage.getItem('chat_sessions')) || {};
+
+        renderSidebar();
+        document.getElementById('user-input').focus();
+
+        // New Toggle Sidebar Logic for Slim Mode
+        function toggleSidebar() {
+            const sidebar = document.getElementById('sidebar');
+            const content = document.getElementById('main-content');
+            
+            if (sidebar.classList.contains('sidebar-expanded')) {
+                sidebar.classList.replace('sidebar-expanded', 'sidebar-slim');
+                content.classList.replace('content-expanded', 'content-slim');
+            } else {
+                sidebar.classList.replace('sidebar-slim', 'sidebar-expanded');
+                content.classList.replace('content-slim', 'content-expanded');
+            }
+        }
+
+        // --- Core Chat Functionality ---
+        async function sendMessage() {
+            const input = document.getElementById('user-input');
+            const text = input.value.trim();
+            if (!text && currentFiles.length === 0) return;
+
+            input.value = '';
+            input.style.height = 'auto';
+            document.getElementById('empty-state').style.display = 'none';
+            document.getElementById('file-preview').innerHTML = '';
+            document.getElementById('file-preview').classList.add('hidden');
+            document.getElementById('send-btn').disabled = true;
+
+            addMessageToUI('user', text, currentFiles);
+            saveToHistory('user', text, currentFiles);
+
+            const payload = { session_id: sessionId, messages: getSessionMessages() };
+            currentFiles = [];
+
+            const assistantMsgId = addMessageToUI('assistant', '', []);
+            const contentDiv = document.getElementById(assistantMsgId).querySelector('.markdown-body');
+            let fullResponse = "";
+
+            try {
+                const response = await fetch('/chat', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const reader = response.body.getReader();
+                const decoder = new TextDecoder();
+                let buffer = '';
+
+                while (true) {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    buffer += decoder.decode(value, { stream: true });
+                    const lines = buffer.split('\n');
+                    buffer = lines.pop(); 
+
+                    for (const line of lines) {
+                        if (!line.trim()) continue;
+                        try {
+                            const data = JSON.parse(line);
+                            if (data.type === 'token') {
+                                fullResponse += data.content;
+                                contentDiv.innerHTML = marked.parse(fullResponse);
+                                scrollToBottom();
+                            } else if (data.type === 'status') {
+                                if (!document.getElementById('thinking-'+assistantMsgId)) {
+                                    contentDiv.innerHTML += `<p id="thinking-${assistantMsgId}" class="text-xs text-indigo-400 font-medium animate-pulse mt-2">🛠️ ${data.content}</p>`;
+                                }
+                                scrollToBottom();
+                            } else if (data.type === 'tool_result') {
+                                const el = document.getElementById('thinking-'+assistantMsgId);
+                                if (el) el.remove();
+                            }
+                        } catch (e) {}
+                    }
+                }
+                saveToHistory('assistant', fullResponse);
+                updateSidebarTitle(text);
+            } catch (err) {
+                contentDiv.innerHTML += `<div class="text-red-500 bg-red-50 p-3 rounded-lg mt-2 border border-red-100">Error: ${err.message}</div>`;
+            }
+            document.getElementById('send-btn').disabled = false;
+            scrollToBottom();
+        }
+
+        function addMessageToUI(role, text, files = []) {
+            const container = document.getElementById('messages-container');
+            const msgId = 'msg-' + Date.now();
+            const isUser = role === 'user';
+            let filesHtml = files.length ? `<div class="flex gap-2 mb-2 flex-wrap">` + files.map(f => `<img src="${f}" class="h-32 w-auto max-w-full object-contain rounded-xl border border-gray-200 bg-gray-100">`).join('') + `</div>` : '';
+            
+            const html = `
+                <div class="flex ${isUser ? 'justify-end' : 'justify-start'} w-full" id="${msgId}">
+                    <div class="max-w-[85%] md:max-w-[75%] lg:max-w-[65%]">
+                        <div class="flex items-center gap-2 mb-1 ${isUser ? 'flex-row-reverse' : ''}">
+                            <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${isUser ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-800 text-white'}">${isUser ? 'YOU' : 'AI'}</div>
+                        </div>
+                        <div class="p-3.5 md:p-4 ${isUser ? 'bg-indigo-600 text-white rounded-2xl rounded-tr-none' : 'bg-white text-gray-800 border border-gray-200 shadow-sm rounded-2xl rounded-tl-none'}">
+                            ${filesHtml}
+                            <div class="markdown-body text-[16px]">${isUser ? text.replace(/\n/g, '<br>') : marked.parse(text)}</div>
+                        </div>
+                    </div>
+                </div>`;
+            container.insertAdjacentHTML('beforeend', html);
+            scrollToBottom();
+            return msgId;
+        }
+
+        function scrollToBottom() {
+            const container = document.getElementById('messages-container');
+            if (container) { requestAnimationFrame(() => { container.scrollTop = container.scrollHeight; }); }
+        }
+
+        function handleFileSelect(event) { processFiles(event.target.files); }
+        document.addEventListener('paste', (e) => {
+            const items = (e.clipboardData || e.originalEvent.clipboardData).items;
+            const files = [];
+            for (let item of items) if (item.kind === 'file') files.push(item.getAsFile());
+            if (files.length > 0) processFiles(files);
+        });
+
+        function processFiles(files) {
+            const preview = document.getElementById('file-preview');
+            preview.classList.remove('hidden');
+            for (let file of files) {
+                const reader = new FileReader();
+                reader.onload = (e) => {
+                    const base64 = e.target.result;
+                    currentFiles.push(base64);
+                    const wrapper = document.createElement('div');
+                    wrapper.className = 'relative flex-shrink-0';
+                    wrapper.innerHTML = `<img src="${base64}" class="h-16 w-16 object-cover rounded-xl border border-gray-200"><button onclick="removeFile(this, '${base64}')" class="absolute -top-1 -right-1 bg-red-500 text-white rounded-full w-5 h-5 flex items-center justify-center text-xs shadow-md">×</button>`;
+                    preview.appendChild(wrapper);
+                    document.getElementById('send-btn').disabled = false;
+                };
+                reader.readAsDataURL(file);
+            }
+        }
+
+        function removeFile(el, b64) {
+            currentFiles = currentFiles.filter(f => f !== b64);
+            el.parentElement.remove();
+            if (currentFiles.length === 0) document.getElementById('file-preview').classList.add('hidden');
+        }
+
+        function saveToHistory(role, content, files = []) {
+            if (!chatHistory[sessionId]) chatHistory[sessionId] = { timestamp: Date.now(), title: 'New Conversation', messages: [] };
+            let stored = role === 'user' && files.length ? [{ type: "text", text: content }, ...files.map(f => ({ type: "image_url", image_url: { url: f } }))] : content;
+            chatHistory[sessionId].messages.push({ role, content: stored });
+            localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
+        }
+
+        function getSessionMessages() { return chatHistory[sessionId]?.messages.map(m => ({ role: m.role, content: m.content })) || []; }
+
+        function updateSidebarTitle(text) {
+            if (chatHistory[sessionId]?.messages.length <= 2) {
+                chatHistory[sessionId].title = text.substring(0, 30) + (text.length > 30 ? '...' : '');
+                localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
+                renderSidebar();
+            }
+        }
+
+        function renderSidebar() {
+            const list = document.getElementById('history-list');
+            list.innerHTML = '';
+            Object.entries(chatHistory).sort((a,b) => b[1].timestamp - a[1].timestamp).forEach(([id, s]) => {
+                const active = id === sessionId ? 'bg-gray-800 text-white shadow-sm' : 'hover:bg-gray-800/50 text-gray-500';
+                list.insertAdjacentHTML('beforeend', `<button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}"><i class="ph ph-chat-centered-text mr-2"></i> ${s.title}</button>`);
+            });
+        }
+
+        function loadSession(id) {
+            sessionId = id;
+            document.getElementById('messages-container').innerHTML = '';
+            document.getElementById('empty-state').style.display = 'none';
+            chatHistory[id].messages.forEach(m => {
+                let t = m.content, f = [];
+                if (Array.isArray(m.content)) {
+                    t = m.content.find(c => c.type === 'text')?.text || '';
+                    f = m.content.filter(c => c.type === 'image_url').map(c => c.image_url.url);
+                }
+                addMessageToUI(m.role, t, f);
+            });
+            renderSidebar();
+        }
+
+        function startNewChat() {
+            sessionId = generateUUID();
+            document.getElementById('messages-container').innerHTML = '';
+            document.getElementById('empty-state').style.display = 'flex';
+            renderSidebar();
+        }
+
+        function generateUUID() { return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const r = Math.random()*16|0, v=c=='x'?r:(r&0x3|0x8); return v.toString(16); }); }
+        function autoResize(el) { el.style.height = 'auto'; el.style.height = el.scrollHeight + 'px'; document.getElementById('send-btn').disabled = el.value.trim() === '' && currentFiles.length === 0; }
+        function handleEnter(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+    </script>
+</body>
+</html>
