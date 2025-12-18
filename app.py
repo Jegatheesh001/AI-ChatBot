@@ -2,8 +2,9 @@ import os
 import json
 import webbrowser
 import uvicorn
+import asyncio
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -22,6 +23,39 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 # 2. In-memory Session Storage
 sessions: Dict[str, Dict[str, Any]] = {}
 
+# 3. Persistent Settings Path
+SETTINGS_FILE = "data/saved_settings.json"
+
+def load_persistent_settings():
+    """
+    PRIORITY HIERARCHY:
+    1. saved_settings.json (User-saved configuration)
+    2. .env file (Environment variables via config.py)
+    3. System Defaults (Fallbacks in config.py)
+    """
+    # Priority 1: Check for physical settings file
+    if os.path.exists(SETTINGS_FILE):
+        try:
+            with open(SETTINGS_FILE, "r") as f:
+                print("📂 Priority 1: Loading from saved_settings.json")
+                return json.load(f)
+        except Exception as e:
+            print(f"⚠️ Error reading settings file: {e}")
+
+    # Priority 2 & 3: Fallback to .env or system defaults
+    print("🌿 Priority 2/3: Loading from .env or Defaults")
+    initial_settings = asyncio.run(config.setup_chat_settings())
+    
+    # Ensure data directory exists and initialize the JSON file
+    os.makedirs("data", exist_ok=True)
+    with open(SETTINGS_FILE, "w") as f:
+        json.dump(initial_settings, f, indent=4)
+        
+    return initial_settings
+
+# Initial load according to the priority hierarchy
+current_settings = load_persistent_settings()
+
 # =======================================================
 # 📦 DATA MODELS
 # =======================================================
@@ -37,18 +71,40 @@ class ChatRequest(BaseModel):
 # =======================================================
 # 🛠️ SESSION HELPER
 # =======================================================
-async def get_or_create_session(session_id: str, settings: dict):
-    if session_id not in sessions:
-        if not settings:
-            settings = await config.setup_chat_settings()
+async def get_or_create_session(session_id: str, new_settings: dict = None):
+    global current_settings
+    
+    # 1. Update persistent file and global state if UI provides new data
+    settings_changed = False
+    if new_settings:
+        # Check if critical settings actually changed to avoid unnecessary re-initialization
+        critical_keys = ["openai_api_key", "openai_base_url", "mcp_command", "openai_model"]
+        for key in critical_keys:
+            if new_settings.get(key) != current_settings.get(key):
+                settings_changed = True
+                break
         
+        if settings_changed:
+            current_settings.update(new_settings)
+            with open(SETTINGS_FILE, "w") as f:
+                json.dump(current_settings, f, indent=4)
+            print("💾 Settings synchronized and saved to data/saved_settings.json")
+
+    # 2. If session doesn't exist OR settings changed, (re)initialize
+    if session_id not in sessions or settings_changed:
+        # Cleanup existing MCP connection if re-initializing
+        if session_id in sessions and "mcp_manager" in sessions[session_id]:
+            print(f"🔄 Re-initializing session {session_id} with new settings...")
+            # If your MCPManager has a disconnect/close method, call it here
+            # await sessions[session_id]["mcp_manager"].disconnect()
+
         client = AsyncOpenAI(
-            api_key=settings.get("openai_api_key"),
-            base_url=settings.get("openai_base_url"),
+            api_key=current_settings.get("openai_api_key"),
+            base_url=current_settings.get("openai_base_url"),
         )
         
         mcp_manager = MCPManager()
-        mcp_cmd = settings.get("mcp_command")
+        mcp_cmd = current_settings.get("mcp_command")
         
         if mcp_cmd:
             print(f"🔌 Connecting MCP for session {session_id}...")
@@ -57,8 +113,9 @@ async def get_or_create_session(session_id: str, settings: dict):
         sessions[session_id] = {
             "client": client,
             "mcp_manager": mcp_manager,
-            "model": settings.get("openai_model", "gpt-4o"),
+            "model": current_settings.get("openai_model", "gpt-4o"),
         }
+    
     return sessions[session_id]
 
 # =======================================================
@@ -109,7 +166,7 @@ async def process_stream(client, model, messages, mcp_manager):
                 current_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
 
         except APIConnectionError as e:
-            yield json.dumps({"type": "error", "content": str(e)}) + "\n"
+            yield json.dumps({"type": "error", "content": f"Connection Error: {str(e)}"}) + "\n"
             break
         except Exception as e:
             yield json.dumps({"type": "error", "content": f"Unexpected error: {str(e)}"}) + "\n"
@@ -124,23 +181,38 @@ async def serve_ui():
     """Serves the frontend HTML."""
     return FileResponse('static/index.html')
 
+@app.get("/settings")
+async def get_settings():
+    """Returns the current application settings."""
+    return current_settings
+
+
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):
-    session = await get_or_create_session(request.session_id, request.settings)
-    formatted_messages = [msg.dict() for msg in request.messages]
+    try:
+        # Pass settings to session creator; it will handle disk saving and re-init
+        session = await get_or_create_session(request.session_id, request.settings)
+        
+        # If this was just a settings sync (no messages), return a success status
+        if not request.messages:
+            return {"status": "settings_updated"}
 
-    return StreamingResponse(
-        process_stream(
-            client=session["client"],
-            model=session["model"],
-            messages=formatted_messages,
-            mcp_manager=session["mcp_manager"]
-        ),
-        media_type="application/x-ndjson"
-    )
+        formatted_messages = [msg.dict() for msg in request.messages]
+        return StreamingResponse(
+            process_stream(
+                client=session["client"],
+                model=session["model"],
+                messages=formatted_messages,
+                mcp_manager=session["mcp_manager"]
+            ),
+            media_type="application/x-ndjson"
+        )
+    except Exception as e:
+        print(f"❌ Chat Endpoint Error: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 if __name__ == "__main__":
     # Open browser automatically
     webbrowser.open("http://localhost:8000")
     print("🚀 Server starting... UI opening at http://localhost:8000")
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run("app:app", host="0.0.0.0", port=8000, reload=True)
