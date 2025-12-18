@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MCP Chat Interface</title>
+    <title>AI Assistant</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -97,7 +97,16 @@
                     <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
                     System Online
                 </div>
-                <div class="flex items-center gap-2">
+                <div class="hide-slim flex items-center gap-2">
+                    <button onclick="toggleTheme()" class="text-gray-400 hover:text-white transition-colors p-1" title="Toggle Theme">
+                        <i class="ph ph-sun text-xl block dark:hidden"></i>
+                        <i class="ph ph-moon text-xl hidden dark:block"></i>
+                    </button>
+                    <button onclick="openSettings()" class="text-gray-400 hover:text-white transition-colors p-1" title="Settings">
+                        <i class="ph ph-gear text-xl"></i>
+                    </button>
+                </div>
+                <div class="show-slim flex-col items-center gap-2">
                     <button onclick="toggleTheme()" class="text-gray-400 hover:text-white transition-colors p-1" title="Toggle Theme">
                         <i class="ph ph-sun text-xl block dark:hidden"></i>
                         <i class="ph ph-moon text-xl hidden dark:block"></i>
@@ -313,6 +322,8 @@
                     <p class="text-xl font-medium text-gray-400 dark:text-gray-500">How can I help you today?</p>
                 </div>
             `;
+            // Unselect any selected chat in the sidebar
+            renderSidebar();
             // Clear any existing files from a previous session
             currentFiles = [];
             updateFilePreview();
@@ -504,7 +515,7 @@
             sortedChats.forEach(([id, s]) => {
                 if (!s.title) return;
                 // update only if relevent - Improved contrast for dark mode inactive text
-                const active = id === sessionId ? 'bg-indigo-600 text-white' : 'hover:bg-gray-800/50 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300';
+                const active = id === sessionId ? 'bg-gray-700 text-gray-500 dark:hover:bg-gray-700 dark:text-gray-300 hover:bg-gray-800/50' : 'hover:bg-gray-800/50 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300';
                 const buttonHtml = `
                     <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
                         <i class="ph ph-chat-centered-text mr-2"></i> 
