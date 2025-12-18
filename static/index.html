@@ -136,7 +136,22 @@
                     <button onclick="document.getElementById('file-input').click()" class="p-3 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
                         <i class="ph ph-paperclip text-2xl"></i>
                     </button>
+                    <button id="mic-btn" onclick="toggleRecording()" class="p-3 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                        <i id="mic-icon" class="ph ph-microphone text-2xl"></i>
+                    </button>
                     <input type="file" id="file-input" class="hidden" multiple onchange="handleFileSelect(event)">
+                    <div id="audio-playback" class="hidden items-center w-full gap-2">
+                        <audio id="audio-player" class="flex-grow"></audio>
+                        <button onclick="playAudio()" class="p-2 text-gray-500 hover:text-indigo-600">
+                            <i class="ph ph-play text-xl"></i>
+                        </button>
+                        <button onclick="sendAudio()" class="p-2 text-green-500 hover:text-green-700">
+                            <i class="ph ph-paper-plane-right text-xl"></i>
+                        </button>
+                        <button onclick="cancelAudio()" class="p-2 text-red-500 hover:text-red-700">
+                            <i class="ph ph-trash text-xl"></i>
+                        </button>
+                    </div>
                     <textarea id="user-input" rows="1" placeholder="Message Assistant..." class="w-full bg-transparent border-none outline-none focus:ring-0 p-3 max-h-48 resize-none text-gray-700 dark:text-gray-200 leading-relaxed text-lg" oninput="autoResize(this)" onkeydown="handleEnter(event)"></textarea>
                     <button id="send-btn" onclick="sendMessage()" class="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all disabled:opacity-30 m-1 shadow-md active:scale-95" disabled>
                         <i class="ph-fill ph-paper-plane-right text-xl"></i>
@@ -186,6 +201,9 @@
         let sessionId = generateUUID();
         let currentFiles = [];
         let chatHistory = {};
+        let mediaRecorder;
+        let audioChunks = [];
+        let audioBlob;
         
         // Settings will be populated by fetchCurrentSettings on page load
         let configSettings = {};
@@ -229,7 +247,7 @@
                     mcpCommand: serverSettings.mcp_command || ''
                 };
                 
-                console.log("✅ Settings successfully loaded from server.", configSettings);
+                console.log("✅ Settings successfully loaded from server.", configSettings.model);
 
             } catch (err) {
                 console.error("⚠️ Failed to load settings from server:", err);
@@ -314,6 +332,7 @@
                     URL.revokeObjectURL(img.src);
                 }
             });
+            cancelAudio();
             container.innerHTML = `
                 <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-300 dark:text-gray-600">
                     <div class="p-6 bg-white dark:bg-gray-700/50 rounded-full shadow-sm mb-4 border border-gray-100 dark:border-gray-700">
@@ -333,7 +352,8 @@
 
         async function sendMessage() {
             const input = document.getElementById('user-input');
-            const text = input.value.trim();
+            let text = input.value.trim();
+            
             if (!text && currentFiles.length === 0) return;
 
             const filesToSend = [...currentFiles];
@@ -433,12 +453,19 @@
             const msgId = 'msg-' + Date.now();
             const isUser = role === 'user';
 
-            const filesHtml = files.length ? 
-                `<div class="flex gap-2 mb-2 flex-wrap">` + 
+            const filesHtml = files.length ?
+                `<div class="flex gap-2 mb-2 flex-wrap">` +
                 files.map(f => {
-                    // If f is a File object, create an object URL; otherwise, it's a data URL from history
                     const src = (typeof f === 'object' && f instanceof File) ? URL.createObjectURL(f) : f;
-                    return `<img src="${src}" class="h-32 w-auto max-w-full object-contain rounded-xl border border-gray-200 dark:border-gray-600">`;
+                    const fileType = (typeof f === 'object' && f instanceof File) ? f.type : '';
+
+                    if (src.startsWith('data:audio') || fileType.startsWith('audio/')) {
+                        return `<audio controls src="${src}" class="w-full"></audio>`;
+                    } else if (src.startsWith('data:image') || fileType.startsWith('image/')) {
+                        return `<img src="${src}" class="h-32 w-auto max-w-full object-contain rounded-xl border border-gray-200 dark:border-gray-600">`;
+                    } else {
+                         return `<a href="${src}" target="_blank" class="text-indigo-400 hover:underline">Unsupported file type</a>`;
+                    }
                 }).join('') + `</div>` : '';
 
             const html = `<div class="flex ${isUser ? 'justify-end' : 'justify-start'} w-full animate-in fade-in slide-in-from-bottom-2 duration-300" id="${msgId}">
@@ -473,7 +500,18 @@
                 const fileDataURLs = await Promise.all(files.map(fileToDataURL));
                 messageContent = [
                     { type: "text", text: content },
-                    ...fileDataURLs.map(url => ({ type: "image_url", image_url: { url } }))
+                    ...fileDataURLs.map((url, i) => {
+                        if (files[i].type.startsWith('image/')) {
+                            return { type: "image_url", image_url: { url } };
+                        } else if (files[i].type.startsWith('audio/')) {
+                            // Standard format for many backends; adjust if your specific API differs
+                            return { 
+                                type: "input_audio", 
+                                input_audio: { data: url.split(',')[1], format: "wav" } 
+                            };
+                        }
+                        return null;
+                    }).filter(Boolean)
                 ];
             } else {
                 messageContent = content;
@@ -533,9 +571,9 @@
             sessionId = id;
             const container = document.getElementById('messages-container');
             
-            container.querySelectorAll('img').forEach(img => {
-                if (img.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(img.src);
+            container.querySelectorAll('img, audio').forEach(media => {
+                if (media.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(media.src);
                 }
             });
             container.innerHTML = '';
@@ -549,7 +587,7 @@
                     let text = '', files = [];
                     if (Array.isArray(m.content)) {
                         text = m.content.find(p => p.type === 'text')?.text || '';
-                        files = m.content.filter(p => p.type === 'image_url').map(p => p.image_url.url);
+                        files = m.content.filter(p => p.type === 'image_url' || p.type === 'audio_url').map(p => (p.image_url || p.audio_url).url);
                     } else {
                         text = m.content;
                     }
@@ -587,12 +625,84 @@
             document.getElementById('send-btn').disabled = el.value.trim() === '' && currentFiles.length === 0;
         }
         function handleEnter(e) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }
+        
+        async function toggleRecording() {
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+                document.getElementById('mic-icon').classList.remove('text-red-500', 'animate-pulse');
+            } else {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    // 1. Let browser pick the best format
+                    mediaRecorder = new MediaRecorder(stream);
+                    
+                    // 2. IMMEDIATELY capture the mimeType (e.g., audio/webm;codecs=opus)
+                    recordedMimeType = mediaRecorder.mimeType; 
+                    
+                    mediaRecorder.start();
+                    audioChunks = [];
+                    document.getElementById('mic-icon').classList.add('text-red-500', 'animate-pulse');
+
+                    mediaRecorder.addEventListener('dataavailable', event => {
+                        if (event.data.size > 0) audioChunks.push(event.data);
+                    });
+
+                    mediaRecorder.addEventListener('stop', () => {
+                        // 3. Use the captured mimeType here
+                        audioBlob = new Blob(audioChunks, { type: recordedMimeType || 'audio/webm' });
+                        
+                        const audioUrl = URL.createObjectURL(audioBlob);
+                        const player = document.getElementById('audio-player');
+                        player.src = audioUrl;
+                        
+                        document.getElementById('user-input').classList.add('hidden');
+                        document.getElementById('audio-playback').classList.remove('hidden');
+                        
+                        // Stop all tracks to release the microphone
+                        stream.getTracks().forEach(track => track.stop());
+                    });
+                } catch (err) {
+                    console.error("Error accessing microphone:", err);
+                    alert("Could not access microphone. Please ensure permissions are granted.");
+                }
+            }
+        }
+
+        function playAudio() {
+            document.getElementById('audio-player').play();
+        }
+
+        async function sendAudio() {
+            if (!audioBlob) return;
+            
+            // Determine extension based on mimeType
+            console.log("Audio Blob Type:", audioBlob.type);
+            const extension = audioBlob.type.includes('webm') ? 'webm' : 'ogg';
+            const audioFile = new File([audioBlob], `recording.${extension}`, { type: audioBlob.type });
+            
+            currentFiles.push(audioFile);
+            
+            // MUST await this so currentFiles isn't cleared too early
+            await sendMessage(); 
+            cancelAudio();
+        }
+
+        function cancelAudio() {
+            audioBlob = null;
+            audioChunks = [];
+            URL.revokeObjectURL(document.getElementById('audio-player').src);
+            document.getElementById('audio-player').src = '';
+            document.getElementById('user-input').classList.remove('hidden');
+            document.getElementById('audio-playback').classList.add('hidden');
+        }
+        
         function handleFileSelect(event) {
             const files = event.target.files;
             if (!files) return;
 
             for (const file of files) {
-                if (file.type.startsWith('image/')) {
+                if (file.type.startsWith('image/') || file.type.startsWith('audio/')) {
                     currentFiles.push(file);
                 }
             }
@@ -603,9 +713,9 @@
         function updateFilePreview() {
             const previewContainer = document.getElementById('file-preview');
             // Revoke previous object URLs to prevent memory leaks
-            previewContainer.querySelectorAll('img').forEach(img => {
-                if (img.src.startsWith('blob:')) {
-                    URL.revokeObjectURL(img.src);
+            previewContainer.querySelectorAll('img, audio').forEach(media => {
+                if (media.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(media.src);
                 }
             });
             previewContainer.innerHTML = '';
@@ -617,11 +727,18 @@
             
             previewContainer.classList.remove('hidden');
             currentFiles.forEach((file, index) => {
-                const imgElement = document.createElement('img');
-                // Create a temporary URL for the file
-                imgElement.src = URL.createObjectURL(file);
-                imgElement.className = "h-20 w-auto object-contain rounded-lg border border-gray-300 bg-gray-100 dark:bg-gray-800 dark:border-gray-700";
-                
+                let element;
+                if (file.type.startsWith('image/')) {
+                    element = document.createElement('img');
+                    element.src = URL.createObjectURL(file);
+                    element.className = "h-20 w-auto object-contain rounded-lg border border-gray-300 bg-gray-100 dark:bg-gray-800 dark:border-gray-700";
+                } else if (file.type.startsWith('audio/')) {
+                    element = document.createElement('audio');
+                    element.src = URL.createObjectURL(file);
+                    element.controls = true;
+                    element.className = "h-12 w-full";
+                }
+
                 const removeBtn = document.createElement('button');
                 removeBtn.innerHTML = '&times;';
                 removeBtn.className = "absolute top-0 right-0 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs font-bold";
@@ -629,7 +746,63 @@
 
                 const wrapper = document.createElement('div');
                 wrapper.className = "relative flex-shrink-0";
-                wrapper.appendChild(imgElement);
+                wrapper.appendChild(element);
+                wrapper.appendChild(removeBtn);
+
+                previewContainer.appendChild(wrapper);
+            });
+            document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
+        }
+        function handleFileSelect(event) {
+            const files = event.target.files;
+            if (!files) return;
+
+            for (const file of files) {
+                if (file.type.startsWith('image/') || file.type.startsWith('audio/')) {
+                    currentFiles.push(file);
+                }
+            }
+            updateFilePreview();
+            event.target.value = ''; // Reset to allow re-selecting the same file
+        }
+
+        function updateFilePreview() {
+            const previewContainer = document.getElementById('file-preview');
+            // Revoke previous object URLs to prevent memory leaks
+            previewContainer.querySelectorAll('img, audio').forEach(media => {
+                if (media.src.startsWith('blob:')) {
+                    URL.revokeObjectURL(media.src);
+                }
+            });
+            previewContainer.innerHTML = '';
+
+            if (currentFiles.length === 0) {
+                previewContainer.classList.add('hidden');
+                return;
+            }
+            
+            previewContainer.classList.remove('hidden');
+            currentFiles.forEach((file, index) => {
+                let element;
+                if (file.type.startsWith('image/')) {
+                    element = document.createElement('img');
+                    element.src = URL.createObjectURL(file);
+                    element.className = "h-20 w-auto object-contain rounded-lg border border-gray-300 bg-gray-100 dark:bg-gray-800 dark:border-gray-700";
+                } else if (file.type.startsWith('audio/')) {
+                    element = document.createElement('audio');
+                    element.src = URL.createObjectURL(file);
+                    element.controls = true;
+                    element.className = "h-12 w-full";
+                }
+
+                const removeBtn = document.createElement('button');
+                removeBtn.innerHTML = '&times;';
+                removeBtn.className = "absolute top-0 right-0 bg-red-600 text-white rounded-full h-5 w-5 flex items-center justify-center text-xs font-bold";
+                removeBtn.onclick = () => removeFile(index);
+
+                const wrapper = document.createElement('div');
+                wrapper.className = "relative flex-shrink-0";
+                wrapper.appendChild(element);
                 wrapper.appendChild(removeBtn);
 
                 previewContainer.appendChild(wrapper);
@@ -645,7 +818,7 @@
         document.getElementById('user-input').addEventListener('paste', (event) => {
             const items = (event.clipboardData || event.originalEvent.clipboardData).items;
             for (const item of items) {
-                if (item.kind === 'file' && item.type.startsWith('image/')) {
+                if (item.kind === 'file' && (item.type.startsWith('image/') || item.type.startsWith('audio/'))) {
                     event.preventDefault();
                     const file = item.getAsFile();
                     currentFiles.push(file);
