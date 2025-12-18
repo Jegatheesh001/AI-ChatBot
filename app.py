@@ -25,6 +25,7 @@ sessions: Dict[str, Dict[str, Any]] = {}
 
 # 3. Persistent Settings Path
 SETTINGS_FILE = "data/saved_settings.json"
+CHAT_HISTORY_FILE = "data/chat_history.json"
 
 def load_persistent_settings():
     """
@@ -67,6 +68,9 @@ class ChatRequest(BaseModel):
     session_id: str
     messages: List[ChatMessage]
     settings: Optional[Dict[str, Any]] = None
+
+class HistorySaveRequest(BaseModel):
+    history: Dict[str, Any]
 
 # =======================================================
 # 🛠️ SESSION HELPER
@@ -185,6 +189,21 @@ async def serve_ui():
 async def get_settings():
     """Returns the current application settings."""
     return current_settings
+
+@app.get("/history")
+async def get_history():
+    """Returns the chat history."""
+    if not os.path.exists(CHAT_HISTORY_FILE):
+        return {}
+    with open(CHAT_HISTORY_FILE, "r") as f:
+        return json.load(f)
+
+@app.post("/history")
+async def save_history(request: HistorySaveRequest):
+    """Saves the chat history."""
+    with open(CHAT_HISTORY_FILE, "w") as f:
+        json.dump(request.history, f, indent=4)
+    return {"status": "ok"}
 
 
 @app.post("/chat")

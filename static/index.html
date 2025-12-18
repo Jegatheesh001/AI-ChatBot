@@ -136,13 +136,13 @@
         // --- GLOBAL STATE ---
         let sessionId = generateUUID();
         let currentFiles = [];
-        let chatHistory = JSON.parse(localStorage.getItem('chat_sessions')) || {};
+        let chatHistory = {};
         
         // Settings will be populated by fetchCurrentSettings on page load
         let configSettings = {};
 
         // --- INITIALIZATION ---
-        renderSidebar();
+        fetchChatHistory();
         // Fetch settings from the server on startup.
         fetchCurrentSettings(); 
         document.getElementById('user-input').focus();
@@ -150,6 +150,20 @@
         /**
          * Fetches current settings from the server and populates the UI.
          */
+        async function fetchChatHistory() {
+            try {
+                const response = await fetch('/history');
+                if (!response.ok) {
+                    throw new Error(`Server returned status: ${response.status}`);
+                }
+                chatHistory = await response.json();
+                console.log("✅ Chat history successfully loaded from server.", chatHistory);
+            } catch (err) {
+                console.error("⚠️ Failed to load chat history from server:", err);
+                chatHistory = {};
+            }
+            renderSidebar();
+        }
         async function fetchCurrentSettings() {
             try {
                 const response = await fetch('/settings');
@@ -166,8 +180,6 @@
                     mcpCommand: serverSettings.mcp_command || ''
                 };
                 
-                // Update local storage to keep it in sync for offline or next visit.
-                localStorage.setItem('mcp_config', JSON.stringify(configSettings));
                 console.log("✅ Settings successfully loaded from server.", configSettings);
 
             } catch (err) {
@@ -212,9 +224,6 @@
                 baseUrl: document.getElementById('setting-base-url').value,
                 mcpCommand: document.getElementById('setting-mcp').value
             };
-            
-            // Persist to local storage for the browser
-            localStorage.setItem('mcp_config', JSON.stringify(configSettings));
             
             // Persist to backend Priority 1 (saved_settings.json) and re-init session
             await syncSettingsWithServer({
@@ -262,7 +271,6 @@
             currentFiles = [];
             updateFilePreview();
             
-            renderSidebar();
             document.getElementById('user-input').focus();
         }
 
@@ -279,8 +287,16 @@
             input.value = '';
             input.style.height = 'auto';
 
+            const isNewChat = !chatHistory[sessionId];
+
             // Wait for history to be saved with data URLs before proceeding
             await saveToHistory('user', text, filesToSend, userMsgId);
+
+            if (isNewChat) {
+                const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
+                chatHistory[sessionId].title = newTitle;
+                renderSidebar();
+            }
 
             const emptyState = document.getElementById('empty-state');
             if (emptyState) emptyState.style.display = 'none';
@@ -309,8 +325,8 @@
                 
                 if (!response.ok) {
                     const err = await response.json();
-                    contentDiv.innerHTML = `<p class="text-red-500 font-bold">Error: ${err.detail || 'Request failed'}</p>`;
-                    await saveToHistory('assistant', contentDiv.innerHTML, [], assistantMsgId);
+                    fullResponse = `<p class="text-red-500 font-bold">Error: ${err.detail || 'Request failed'}</p>`;
+                    contentDiv.innerHTML = fullResponse;
                     return;
                 }
 
@@ -334,23 +350,23 @@
                             } else if (data.type === 'status') {
                                 if (!document.getElementById('thinking-'+assistantMsgId)) {
                                     contentDiv.innerHTML += `<p id="thinking-${assistantMsgId}" class="text-xs text-indigo-400 font-medium animate-pulse mt-2">🛠️ ${data.content}</p>`;
-                                }
+                                 }
                                 scrollToBottom();
                             } else if (data.type === 'tool_result') {
                                 const el = document.getElementById('thinking-'+assistantMsgId);
                                 if (el) el.remove();
                             } else if (data.type === 'error') {
-                                contentDiv.innerHTML += `<p class="text-red-500 font-bold mt-2">⚠️ Stream Error: ${data.content}</p>`;
+                                fullResponse += `<p class="text-red-500 font-bold mt-2">⚠️ Stream Error: ${data.content}</p>`;
+                                contentDiv.innerHTML = fullResponse;
                             }
                         } catch (e) {}
                     }
                 }
-                await saveToHistory('assistant', fullResponse, [], assistantMsgId);
-                updateSidebarTitle(text);
             } catch (err) { 
-                contentDiv.innerHTML = `<p class="text-red-500">Network Error: ${err.message}</p>`; 
-                await saveToHistory('assistant', contentDiv.innerHTML, [], assistantMsgId);
+                fullResponse = `<p class="text-red-500">Network Error: ${err.message}</p>`;
+                contentDiv.innerHTML = fullResponse;
             } finally {
+                await saveToHistory('assistant', fullResponse, [], assistantMsgId);
                 document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
             }
         }
@@ -387,7 +403,7 @@
 
         async function saveToHistory(role, content, files = [], msgId) {
             if (!chatHistory[sessionId]) {
-                chatHistory[sessionId] = { timestamp: Date.now(), title: 'New Conversation', messages: [] };
+                chatHistory[sessionId] = { timestamp: Date.now(), title: '', messages: [] };
             }
 
             if (role === 'user') {
@@ -415,7 +431,17 @@
                 chatHistory[sessionId].messages.push(message);
             }
 
-            localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
+            try {
+                await fetch('/history', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({ history: chatHistory })
+                });
+            } catch (err) {
+                console.error("⚠️ Failed to save chat history to server:", err);
+            }
         }
 
         function getSessionMessages() {
@@ -424,23 +450,13 @@
             // Use structuredClone to deep-copy messages, ensuring the original array is not modified.
             return structuredClone(session.messages);
         }
-        function updateSidebarTitle(text) {
-            const session = chatHistory[sessionId];
-            // Only update the title if it's a new conversation (or has the default title)
-            if (session && session.messages.length > 1) {
-                return;
-            }
-            const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
-            session.title = newTitle;
-            localStorage.setItem('chat_sessions', JSON.stringify(chatHistory));
-            renderSidebar();
-        }
         function renderSidebar() {
             const list = document.getElementById('history-list');
             list.innerHTML = '';
             const sortedChats = Object.entries(chatHistory).sort((a, b) => b[1].timestamp - a[1].timestamp);
             
             sortedChats.forEach(([id, s]) => {
+                if (!s.title) return;
                 const active = id === sessionId ? 'bg-gray-700 text-white' : 'hover:bg-gray-800/50 text-gray-500';
                 const buttonHtml = `
                     <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
