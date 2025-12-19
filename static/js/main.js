@@ -397,7 +397,9 @@ function renderSidebar() {
     const sortedChats = Object.entries(chatHistory).sort((a, b) => b[1].timestamp - a[1].timestamp);
     
     sortedChats.forEach(([id, s]) => {
-        if (!s.title) return;
+        if (!s.title) {
+            s.title = 'Audio Chat';
+        }
         // update only if relevent - Improved contrast for dark mode inactive text
         const active = id === sessionId ? 'bg-gray-700 text-gray-500 dark:hover:bg-gray-700 dark:text-gray-300 hover:bg-gray-800/50' : 'hover:bg-gray-800/50 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300';
         const buttonHtml = `
@@ -480,7 +482,20 @@ function loadSession(id) {
             let text = '', files = [];
             if (Array.isArray(m.content)) {
                 text = m.content.find(p => p.type === 'text')?.text || '';
-                files = m.content.filter(p => p.type === 'image_url' || p.type === 'audio_url').map(p => (p.image_url || p.audio_url).url);
+                files = m.content.map(p => {
+                    if (p.type === 'image_url') {
+                        return p.image_url.url;
+                    }
+                    // Handle legacy audio format for backward compatibility
+                    if (p.type === 'audio_url') {
+                        return p.audio_url.url;
+                    }
+                    if (p.type === 'input_audio') {
+                        // Reconstruct the data URL for display
+                        return `data:audio/${p.input_audio.format || 'wav'};base64,${p.input_audio.data}`;
+                    }
+                    return null;
+                }).filter(Boolean);
             } else {
                 text = m.content;
             }
