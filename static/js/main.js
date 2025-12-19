@@ -197,7 +197,8 @@ async function sendMessage() {
     if (!text && currentFiles.length === 0) return;
 
     const filesToSend = [...currentFiles];
-    const userMsgId = addMessageToUI('user', text, filesToSend);
+    const userTimestamp = Date.now();
+    const userMsgId = addMessageToUI('user', text, filesToSend, userTimestamp);
 
     currentFiles = [];
     updateFilePreview();
@@ -207,7 +208,7 @@ async function sendMessage() {
     const isNewChat = !chatHistory[sessionId];
 
     // Wait for history to be saved with data URLs before proceeding
-    await saveToHistory('user', text, filesToSend, userMsgId);
+    await saveToHistory('user', text, filesToSend, userMsgId, userTimestamp);
 
     if (isNewChat) {
         const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
@@ -229,7 +230,8 @@ async function sendMessage() {
         }
     };
     
-    const assistantMsgId = addMessageToUI('assistant', '', []);
+    const assistantTimestamp = Date.now();
+    const assistantMsgId = addMessageToUI('assistant', '', [], assistantTimestamp);
     const contentDiv = document.getElementById(assistantMsgId).querySelector('.markdown-body');
     let fullResponse = "";
 
@@ -283,14 +285,14 @@ async function sendMessage() {
         fullResponse = `<p class="text-red-500">Network Error: ${err.message}</p>`;
         contentDiv.innerHTML = fullResponse;
     } finally {
-        await saveToHistory('assistant', fullResponse, [], assistantMsgId);
+        await saveToHistory('assistant', fullResponse, [], assistantMsgId, assistantTimestamp);
         document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
     }
 }
 
-function addMessageToUI(role, text, files = []) {
+function addMessageToUI(role, text, files = [], timestamp) {
     const container = document.getElementById('messages-container');
-    const msgId = 'msg-' + Date.now();
+    const msgId = 'msg-' + (timestamp || Date.now());
     const isUser = role === 'user';
 
     const filesHtml = files.length ?
@@ -312,7 +314,7 @@ function addMessageToUI(role, text, files = []) {
         <div class="max-w-[85%] md:max-w-[75%] lg:max-w-[65%]">
             <div class="flex items-center gap-2 mb-1 ${isUser ? 'flex-row-reverse' : ''}">
                 <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${isUser ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-800 text-white dark:bg-gray-600 dark:text-gray-200'}">${isUser ? 'YOU' : 'AI'}</div>
-                <div class="text-xs text-gray-400">${getReadableTimestamp(Date.now())}</div>
+                <div class="text-xs text-gray-400">${getReadableTimestamp(timestamp || Date.now())}</div>
             </div>
             <div class="p-3.5 md:p-4 ${isUser ? 'bg-indigo-600 dark:bg-indigo-700 text-white rounded-2xl rounded-tr-none' : 'bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 shadow-sm rounded-2xl rounded-tl-none'}">
                 ${filesHtml}<div class="markdown-body text-[16px] ${isUser ? '' : 'dark:text-gray-100'}">${isUser ? text.replace(/\n/g, '<br>') : marked.parse(text)}</div>
@@ -326,7 +328,7 @@ function addMessageToUI(role, text, files = []) {
 
 function scrollToBottom() { const c = document.getElementById('messages-container'); if (c) requestAnimationFrame(() => c.scrollTop = c.scrollHeight); }
 
-async function saveToHistory(role, content, files = [], msgId) {
+async function saveToHistory(role, content, files = [], msgId, timestamp) {
     if (!chatHistory[sessionId]) {
         chatHistory[sessionId] = { timestamp: Date.now(), title: '', messages: [] };
     }
@@ -358,7 +360,7 @@ async function saveToHistory(role, content, files = [], msgId) {
         messageContent = content;
     }
     
-    const message = { id: msgId, role, content: messageContent };
+    const message = { id: msgId, role, content: messageContent, timestamp };
 
     const existingMsgIndex = chatHistory[sessionId].messages.findIndex(m => m.id === msgId);
     if (existingMsgIndex > -1) {
@@ -388,30 +390,41 @@ function getSessionMessages() {
 }
 function getReadableTimestamp(timestamp) {
     const date = new Date(timestamp);
-    return date.toLocaleTimeString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleString([], {
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+    });
 }
 
 function renderSidebar() {
     const list = document.getElementById('history-list');
     list.innerHTML = '';
     const sortedChats = Object.entries(chatHistory).sort((a, b) => b[1].timestamp - a[1].timestamp);
-    
+
     sortedChats.forEach(([id, s]) => {
         if (!s.title) {
             s.title = 'Audio Chat';
         }
-        // update only if relevent - Improved contrast for dark mode inactive text
         const active = id === sessionId ? 'bg-gray-700 text-gray-500 dark:hover:bg-gray-700 dark:text-gray-300 hover:bg-gray-800/50' : 'hover:bg-gray-800/50 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300';
         const buttonHtml = `
-            <div class="flex items-center">
+            <div class="flex items-center relative group">
                 <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
                     <div class="flex justify-between items-center">
-                        <span class="truncate"><i class="ph ph-chat-centered-text mr-2"></i>${s.title}</span>
+                        <span id="chat-title-${id}" class="truncate"><i class="ph ph-chat-centered-text mr-2"></i>${s.title}</span>
                     </div>
                 </button>
-                <button onclick="deleteChat('${id}')" class="p-2 text-gray-400 hover:text-white">
-                    <i class="ph ph-trash"></i>
-                </button>
+                <div class="absolute right-0 items-center hidden group-hover:flex">
+                    <button onclick="toggleChatMenu('${id}', event)" class="p-2 text-gray-400 hover:text-white">
+                        <i class="ph ph-dots-three-vertical"></i>
+                    </button>
+                    <div id="menu-${id}" class="absolute right-8 top-0 mt-2 w-36 bg-gray-800 border border-gray-700 rounded-md shadow-lg z-10 hidden">
+                        <a href="#" onclick="renameChat('${id}')" class="block px-4 py-2 text-sm text-gray-300 hover:bg-gray-700">Rename</a>
+                        <a href="#" onclick="deleteChat('${id}')" class="block px-4 py-2 text-sm text-red-400 hover:bg-gray-700">Delete</a>
+                    </div>
+                </div>
             </div>
         `;
         list.insertAdjacentHTML('beforeend', buttonHtml);
@@ -419,6 +432,48 @@ function renderSidebar() {
 
     // Scroll to the top of the list
     list.scrollTop = 0;
+}
+
+function toggleChatMenu(id, event) {
+    event.stopPropagation();
+    const menu = document.getElementById(`menu-${id}`);
+    document.querySelectorAll('[id^=menu-]').forEach(m => {
+        if (m.id !== `menu-${id}`) {
+            m.classList.add('hidden');
+        }
+    });
+    menu.classList.toggle('hidden');
+}
+
+async function renameChat(id) {
+    const titleSpan = document.getElementById(`chat-title-${id}`);
+    const currentTitle = chatHistory[id].title;
+    const newTitle = prompt("Enter new chat title:", currentTitle);
+
+    if (newTitle && newTitle.trim() !== '' && newTitle !== currentTitle) {
+        chatHistory[id].title = newTitle;
+        titleSpan.innerHTML = `<i class="ph ph-chat-centered-text mr-2"></i>${newTitle}`;
+        
+        try {
+            await fetch('/history', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({
+                    history: chatHistory
+                })
+            });
+            renderSidebar(); // Re-render to ensure consistency
+        } catch (err) {
+            console.error("⚠️ Failed to save renamed chat title to server:", err);
+            // Revert on failure
+            chatHistory[id].title = currentTitle;
+            titleSpan.innerHTML = `<i class="ph ph-chat-centered-text mr-2"></i>${currentTitle}`;
+        }
+    }
+    // Close the menu
+    document.getElementById(`menu-${id}`).classList.add('hidden');
 }
 
 async function deleteChat(id) {
@@ -499,7 +554,7 @@ function loadSession(id) {
             } else {
                 text = m.content;
             }
-            addMessageToUI(m.role, text, files);
+            addMessageToUI(m.role, text, files, m.timestamp);
         });
     }
     
