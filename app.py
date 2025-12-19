@@ -203,6 +203,18 @@ async def get_history():
     with open(CHAT_HISTORY_FILE, "r") as f:
         return json.load(f)
 
+@app.get("/history/{chat_id}")
+async def get_chat_history(chat_id: str):
+    """Returns a specific chat history."""
+    if not os.path.exists(CHAT_HISTORY_FILE):
+        raise HTTPException(status_code=404, detail="Chat history not found")
+    with open(CHAT_HISTORY_FILE, "r") as f:
+        history = json.load(f)
+        chat = history.get(chat_id)
+        if not chat:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        return chat
+
 @app.post("/history")
 async def save_history(request: HistorySaveRequest):
     """Saves the chat history."""
@@ -210,6 +222,29 @@ async def save_history(request: HistorySaveRequest):
         json.dump(request.history, f, indent=4)
     return {"status": "ok"}
 
+
+@app.delete("/history")
+async def clear_history():
+    """Deletes all chat history."""
+    if os.path.exists(CHAT_HISTORY_FILE):
+        with open(CHAT_HISTORY_FILE, "w") as f:
+            json.dump({}, f)
+    return {"status": "ok"}
+
+@app.delete("/history/{chat_id}")
+async def delete_history(chat_id: str):
+    """Deletes a specific chat history."""
+    if not os.path.exists(CHAT_HISTORY_FILE):
+        raise HTTPException(status_code=404, detail="Chat history not found")
+    with open(CHAT_HISTORY_FILE, "r+") as f:
+        history = json.load(f)
+        if chat_id not in history:
+            raise HTTPException(status_code=404, detail="Chat not found")
+        del history[chat_id]
+        f.seek(0)
+        json.dump(history, f, indent=4)
+        f.truncate()
+    return {"status": "ok"}
 
 @app.post("/chat")
 async def chat_endpoint(request: ChatRequest):

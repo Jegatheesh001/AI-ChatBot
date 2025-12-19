@@ -22,8 +22,31 @@ let audioBlob;
 // Settings will be populated by fetchCurrentSettings on page load
 let configSettings = {};
 
+async function loadChatFromURL() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const chatId = urlParams.get('chat');
+    if (chatId) {
+        try {
+            const response = await fetch(`/history/${chatId}`);
+            if (!response.ok) {
+                throw new Error(`Server returned status: ${response.status}`);
+            }
+            const chat = await response.json();
+            chatHistory[chatId] = chat;
+            loadSession(chatId);
+            return true;
+        } catch (err) {
+            console.error("⚠️ Failed to load chat from URL:", err);
+            return false;
+        }
+    }
+    return false;
+}
+
 // --- INITIALIZATION ---
 fetchChatHistory();
+loadChatFromURL();
+
 // Fetch settings from the server on startup.
 fetchCurrentSettings();
 document.getElementById('user-input').focus();
@@ -138,6 +161,9 @@ async function syncSettingsWithServer(newSettings) {
 
 function startNewChat() {
     sessionId = generateUUID();
+    const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname;
+    window.history.pushState({path: newUrl}, '', newUrl);
+
     const container = document.getElementById('messages-container');
     
     // Revoke any existing object URLs before starting a new chat
@@ -286,6 +312,7 @@ function addMessageToUI(role, text, files = []) {
         <div class="max-w-[85%] md:max-w-[75%] lg:max-w-[65%]">
             <div class="flex items-center gap-2 mb-1 ${isUser ? 'flex-row-reverse' : ''}">
                 <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold ${isUser ? 'bg-indigo-100 text-indigo-600' : 'bg-gray-800 text-white dark:bg-gray-600 dark:text-gray-200'}">${isUser ? 'YOU' : 'AI'}</div>
+                <div class="text-xs text-gray-400">${getReadableTimestamp(Date.now())}</div>
             </div>
             <div class="p-3.5 md:p-4 ${isUser ? 'bg-indigo-600 dark:bg-indigo-700 text-white rounded-2xl rounded-tr-none' : 'bg-white dark:bg-gray-700 border border-gray-200 dark:border-gray-600 shadow-sm rounded-2xl rounded-tl-none'}">
                 ${filesHtml}<div class="markdown-body text-[16px] ${isUser ? '' : 'dark:text-gray-100'}">${isUser ? text.replace(/\n/g, '<br>') : marked.parse(text)}</div>
@@ -359,6 +386,11 @@ function getSessionMessages() {
     // Use structuredClone to deep-copy messages, ensuring the original array is not modified.
     return structuredClone(session.messages);
 }
+function getReadableTimestamp(timestamp) {
+    const date = new Date(timestamp);
+    return date.toLocaleTimeString([], { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
 function renderSidebar() {
     const list = document.getElementById('history-list');
     list.innerHTML = '';
@@ -369,10 +401,16 @@ function renderSidebar() {
         // update only if relevent - Improved contrast for dark mode inactive text
         const active = id === sessionId ? 'bg-gray-700 text-gray-500 dark:hover:bg-gray-700 dark:text-gray-300 hover:bg-gray-800/50' : 'hover:bg-gray-800/50 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-300';
         const buttonHtml = `
-            <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
-                <i class="ph ph-chat-centered-text mr-2"></i> 
-                ${s.title}
-            </button>
+            <div class="flex items-center">
+                <button onclick="loadSession('${id}')" class="w-full text-left p-3.5 rounded-xl text-sm truncate transition-all ${active}">
+                    <div class="flex justify-between items-center">
+                        <span class="truncate"><i class="ph ph-chat-centered-text mr-2"></i>${s.title}</span>
+                    </div>
+                </button>
+                <button onclick="deleteChat('${id}')" class="p-2 text-gray-400 hover:text-white">
+                    <i class="ph ph-trash"></i>
+                </button>
+            </div>
         `;
         list.insertAdjacentHTML('beforeend', buttonHtml);
     });
@@ -381,8 +419,49 @@ function renderSidebar() {
     list.scrollTop = 0;
 }
 
+async function deleteChat(id) {
+    if (confirm('Are you sure you want to delete this chat?')) {
+        try {
+            const response = await fetch(`/history/${id}`, {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                throw new Error(`Server returned status: ${response.status}`);
+            }
+            delete chatHistory[id];
+            if (sessionId === id) {
+                startNewChat();
+            }
+            renderSidebar();
+        } catch (err) {
+            console.error("⚠️ Failed to delete chat:", err);
+        }
+    }
+}
+
+async function clearAllHistory() {
+    if (confirm('Are you sure you want to delete all chat history?')) {
+        try {
+            const response = await fetch('/history', {
+                method: 'DELETE',
+            });
+            if (!response.ok) {
+                throw new Error(`Server returned status: ${response.status}`);
+            }
+            chatHistory = {};
+            startNewChat();
+            renderSidebar();
+        } catch (err) {
+            console.error("⚠️ Failed to clear chat history:", err);
+        }
+    }
+}
+
 function loadSession(id) {
     sessionId = id;
+    const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?chat=' + id;
+    window.history.pushState({path: newUrl}, '', newUrl);
+    
     const container = document.getElementById('messages-container');
     
     container.querySelectorAll('img, audio').forEach(media => {
