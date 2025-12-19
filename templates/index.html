@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en" class="">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Assistant</title>
+    <script src="{{ url_for('static', path='js/lib/tailwindcss-3_4_17.js') }}" defer></script>
+    <script src="{{ url_for('static', path='js/lib/marked.min.js') }}" defer></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <script src="{{ url_for('static', path='js/main.js') }}" defer></script>
+    <style>
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        .dark ::-webkit-scrollbar-thumb { background: #4b5563; }
+        .dark ::-webkit-scrollbar-thumb:hover { background: #6b7280; }
+
+        #messages-container > div { margin-top: 2px !important; margin-bottom: 2px !important; }
+        .markdown-body p { margin-bottom: 2px !important; line-height: 1.5; }
+        
+        /* update only if relevent - Improved code block contrast for light/dark modes */
+        .markdown-body pre { 
+            background: #f8fafc; 
+            color: #1e293b; 
+            padding: 12px; 
+            border: 1px solid #e2e8f0;
+            border-radius: 8px; 
+            overflow-x: auto; 
+            margin: 4px 0; 
+        }
+        .dark .markdown-body pre { 
+            background: #1e293b; 
+            color: #f1f5f9; 
+            border: 1px solid #334155;
+        }
+
+        .markdown-body code { font-family: 'ui-monospace', monospace; background: #f1f5f9; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
+        .dark .markdown-body code { background: #374151; color: #e5e7eb; }
+
+        #sidebar { transition: width 0.3s cubic-bezier(0.4, 0, 0.2, 1); overflow: hidden; }
+        #main-content { transition: margin-left 0.3s cubic-bezier(0.4, 0, 0.2, 1); }
+
+        .sidebar-slim { width: 64px !important; }
+        .sidebar-expanded { width: 288px !important; }
+        .content-slim { margin-left: 64px !important; }
+        .content-expanded { margin-left: 288px !important; }
+
+        .hide-slim { transition: opacity 0.2s; }
+        .sidebar-slim .hide-slim { opacity: 0; pointer-events: none; display: none; }
+        .show-slim { display: none; }
+        .sidebar-slim .show-slim { display: flex; }
+        
+        #settings-modal { background-color: rgba(0,0,0,0.5); }
+        .dark #settings-modal { background-color: rgba(0,0,0,0.7); }
+    </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-800 h-screen max-h-screen overflow-hidden flex text-slate-800 dark:text-slate-200 font-sans">
+
+    <div id="sidebar" class="sidebar-expanded bg-gray-900 dark:bg-black text-gray-300 flex flex-col fixed z-30 h-full shadow-xl">
+        <div class="p-5 border-b border-gray-800 dark:border-gray-700 flex items-center min-h-[73px]">
+            <button onclick="toggleSidebar()" class="text-gray-400 hover:text-white transition-colors flex-shrink-0">
+                <i class="ph ph-list text-2xl"></i>
+            </button>
+            <h1 class="hide-slim font-bold text-white text-lg flex items-center gap-2 ml-3 whitespace-nowrap">
+                <i class="ph-fill ph-sparkle text-indigo-400"></i> AI Assistant
+            </h1>
+        </div>
+
+        <div class="p-4 flex flex-col items-center">
+            <button onclick="startNewChat()" class="hide-slim w-full flex items-center justify-center gap-2 bg-indigo-600 hover:bg-indigo-700 text-white px-4 py-3 rounded-xl transition-all shadow-lg active:scale-95">
+                <i class="ph ph-plus-bold"></i> New Chat
+            </button>
+            <button onclick="startNewChat()" class="show-slim text-gray-400 hover:text-white p-2 mt-2 transition-colors" title="New Chat">
+                <i class="ph ph-note-pencil text-2xl"></i>
+            </button>
+        </div>
+
+        <div class="hide-slim flex-1 overflow-y-auto px-3 space-y-1" id="history-list"></div>
+
+        <div class="mt-auto p-4 border-t border-gray-800 dark:border-gray-700">
+            <div class="flex items-center justify-between w-full">
+                <div class="hide-slim flex items-center gap-2 text-[11px] text-gray-500 px-1">
+                    <div class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+                    System Online
+                </div>
+                <div class="hide-slim flex items-center gap-2">
+                    <button onclick="toggleTheme()" class="text-gray-400 hover:text-white transition-colors p-1" title="Toggle Theme">
+                        <i class="ph ph-sun text-xl block dark:hidden"></i>
+                        <i class="ph ph-moon text-xl hidden dark:block"></i>
+                    </button>
+                    <button onclick="openSettings()" class="text-gray-400 hover:text-white transition-colors p-1" title="Settings">
+                        <i class="ph ph-gear text-xl"></i>
+                    </button>
+                </div>
+                <div class="show-slim flex-col items-center gap-2">
+                    <button onclick="toggleTheme()" class="text-gray-400 hover:text-white transition-colors p-1" title="Toggle Theme">
+                        <i class="ph ph-sun text-xl block dark:hidden"></i>
+                        <i class="ph ph-moon text-xl hidden dark:block"></i>
+                    </button>
+                    <button onclick="openSettings()" class="text-gray-400 hover:text-white transition-colors p-1" title="Settings">
+                        <i class="ph ph-gear text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="main-content" class="content-expanded flex-1 flex flex-col h-full max-h-screen overflow-hidden relative">
+        <div id="messages-container" class="flex-1 flex flex-col overflow-y-auto p-4 md:p-10 space-y-1 min-h-0">
+            <div id="empty-state" class="flex flex-col items-center justify-center h-full text-gray-300 dark:text-gray-600">
+                <div class="p-6 bg-white dark:bg-gray-700/50 rounded-full shadow-sm mb-4 border border-gray-100 dark:border-gray-700">
+                    <i class="ph ph-chat-circle-dots text-5xl text-indigo-200 dark:text-indigo-400"></i>
+                </div>
+                <p class="text-xl font-medium text-gray-400 dark:text-gray-500">How can I help you today?</p>
+            </div>
+        </div>
+
+        <div class="bg-white dark:bg-gray-900 border-t border-gray-200 dark:border-gray-700 p-4 w-full z-20">
+            <div class="max-w-4xl mx-auto">
+                <div id="file-preview" class="flex gap-3 mb-3 overflow-x-auto hidden px-2"></div>
+                <div class="bg-white dark:bg-gray-800 rounded-2xl border border-gray-300 dark:border-gray-600 p-2 transition-all focus-within:ring-4 focus-within:ring-indigo-100 dark:focus-within:ring-indigo-800/50 focus-within:border-indigo-400 dark:focus-within:border-indigo-500 flex items-end">
+                    <button onclick="document.getElementById('file-input').click()" class="p-3 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                        <i class="ph ph-paperclip text-2xl"></i>
+                    </button>
+                    <button id="mic-btn" onclick="toggleRecording()" class="p-3 text-gray-400 hover:text-indigo-600 dark:hover:text-indigo-400 transition-colors">
+                        <i id="mic-icon" class="ph ph-microphone text-2xl"></i>
+                    </button>
+                    <input type="file" id="file-input" class="hidden" multiple onchange="handleFileSelect(event)">
+                    <div id="audio-playback" class="hidden items-center w-full gap-2">
+                        <audio id="audio-player" class="flex-grow"></audio>
+                        <button onclick="playAudio()" class="p-2 text-gray-500 hover:text-indigo-600">
+                            <i class="ph ph-play text-xl"></i>
+                        </button>
+                        <button onclick="sendAudio()" class="p-2 text-green-500 hover:text-green-700">
+                            <i class="ph ph-paper-plane-right text-xl"></i>
+                        </button>
+                        <button onclick="cancelAudio()" class="p-2 text-red-500 hover:text-red-700">
+                            <i class="ph ph-trash text-xl"></i>
+                        </button>
+                    </div>
+                    <textarea id="user-input" rows="1" placeholder="Message Assistant..." class="w-full bg-transparent border-none outline-none focus:ring-0 p-3 max-h-48 resize-none text-gray-700 dark:text-gray-200 leading-relaxed text-lg" oninput="autoResize(this)" onkeydown="handleEnter(event)"></textarea>
+                    <button id="send-btn" onclick="sendMessage()" class="p-3 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl transition-all disabled:opacity-30 m-1 shadow-md active:scale-95" disabled>
+                        <i class="ph-fill ph-paper-plane-right text-xl"></i>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div id="settings-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-95 opacity-0 duration-200" id="modal-content">
+            <div class="p-6 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
+                <h3 class="font-bold text-lg flex items-center gap-2 text-gray-800 dark:text-gray-100">
+                    <i class="ph ph-sliders text-indigo-600"></i> Configuration
+                </h3>
+                <button onclick="closeSettings()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                    <i class="ph ph-x text-2xl"></i>
+                </button>
+            </div>
+            <div class="p-6 space-y-4 bg-white dark:bg-gray-800">
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Model Name</label>
+                    <input type="text" id="setting-model" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">API Key</label>
+                    <input type="password" id="setting-api-key" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Base URL</label>
+                    <input type="text" id="setting-base-url" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
+                </div>
+                <div>
+                    <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">MCP Command</label>
+                    <input type="text" id="setting-mcp" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
+                </div>
+            </div>
+            <div class="p-6 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-end gap-3">
+                <button onclick="closeSettings()" class="px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white font-medium">Cancel</button>
+                <button onclick="saveSettings()" class="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 shadow-sm transition-all">Save Changes</button>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

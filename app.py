@@ -4,8 +4,9 @@ import webbrowser
 import uvicorn
 import asyncio
 from typing import List, Optional, Dict, Any
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.templating import Jinja2Templates
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from openai import AsyncOpenAI, APIConnectionError
@@ -18,7 +19,11 @@ import components.config as config
 app = FastAPI(title="MCP Chat App")
 
 # 1. Mount Static Files (CSS/JS if you separate them later)
-app.mount("/static", StaticFiles(directory="static"), name="static")
+script_dir = os.path.dirname(__file__)
+static_path = os.path.join(script_dir, "static")
+app.mount("/static", StaticFiles(directory=static_path), name="static")
+# Set up the template directory
+templates = Jinja2Templates(directory="templates")
 
 # 2. In-memory Session Storage
 sessions: Dict[str, Dict[str, Any]] = {}
@@ -181,9 +186,9 @@ async def process_stream(client, model, messages, mcp_manager):
 # =======================================================
 
 @app.get("/")
-async def serve_ui():
+async def serve_ui(request: Request):
     """Serves the frontend HTML."""
-    return FileResponse('static/index.html')
+    return templates.TemplateResponse("index.html", {"request": request})
 
 @app.get("/settings")
 async def get_settings():
