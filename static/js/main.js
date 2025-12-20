@@ -269,20 +269,20 @@ async function sendMessage() {
                         if (el) el.remove();
                         
                         // Create a formatted block for the tool result and append to history
-                        const toolHtml = ```
-                            <div class="my-3 p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-600 rounded-xl text-sm">
-                                <details class="group">
-                                    <summary class="flex items-center justify-between cursor-pointer font-mono text-indigo-600 dark:text-indigo-400">
-                                        <span class="flex items-center gap-2">
-                                            <i class="ph ph-wrench"></i> Used: <strong>${data.tool}</strong>
-                                        </span>
-                                        <i class="ph ph-caret-down transition-transform group-open:rotate-180"></i>
-                                    </summary>
-                                    <div class="mt-2 p-2 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg overflow-x-auto">
-                                        <pre class="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">${data.result}</pre>
-                                    </div>
-                                </details>
-                            </div>\n\n```;
+                        const toolHtml = `
+<div class="my-3 p-3 bg-gray-50 dark:bg-gray-800/50 border border-gray-200 dark:border-gray-600 rounded-xl text-sm">
+    <details class="group">
+        <summary class="flex items-center justify-between cursor-pointer font-mono text-indigo-600 dark:text-indigo-400">
+            <span class="flex items-center gap-2">
+                <i class="ph ph-wrench"></i> Used: <strong>${data.tool}</strong>
+            </span>
+            <i class="ph ph-caret-down transition-transform group-open:rotate-180"></i>
+        </summary>
+        <div class="mt-2 p-2 bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-700 rounded-lg overflow-x-auto">
+            <pre class="text-xs text-gray-700 dark:text-gray-300 whitespace-pre-wrap">${data.result}</pre>
+        </div>
+    </details>
+</div>\n\n`;
                         fullResponse += toolHtml;
                         contentDiv.innerHTML = marked.parse(fullResponse);
                         scrollToBottom();
