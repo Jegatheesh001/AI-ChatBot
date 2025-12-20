@@ -132,53 +132,98 @@ async def get_or_create_session(session_id: str, new_settings: dict = None):
 # =======================================================
 async def process_stream(client, model, messages, mcp_manager):
     current_messages = messages.copy()
-    tools = mcp_manager.get_openai_tools()
+    
+    # Ensure tools exist; if list is empty, pass None to avoid API errors
+    mcp_tools = mcp_manager.get_openai_tools()
+    tools = mcp_tools if mcp_tools else None
 
     while True:
         try:
             stream = await client.chat.completions.create(
-                model=model, messages=current_messages, tools=tools, stream=True
+                model=model, 
+                messages=current_messages, 
+                tools=tools, 
+                stream=True
             )
             
-            tool_calls = []
+            full_content = ""
+            tool_calls_buffer = {} # Use dict to track by index
             
             async for chunk in stream:
+                if not chunk.choices:
+                    continue
+                    
                 delta = chunk.choices[0].delta
+                
+                # Handle Text Content
                 if delta.content:
+                    full_content += delta.content
                     yield json.dumps({"type": "token", "content": delta.content}) + "\n"
+                
+                # Handle Tool Calls (Streaming logic)
                 if delta.tool_calls:
                     for tc in delta.tool_calls:
-                        if tc.index >= len(tool_calls):
-                            tool_calls.append({"id": "", "function": {"name": "", "arguments": ""}})
-                        if tc.id: tool_calls[tc.index]["id"] = tc.id
-                        if tc.function.name: tool_calls[tc.index]["function"]["name"] += tc.function.name
-                        if tc.function.arguments: tool_calls[tc.index]["function"]["arguments"] += tc.function.arguments
+                        idx = tc.index
+                        if idx not in tool_calls_buffer:
+                            tool_calls_buffer[idx] = {
+                                "id": tc.id, 
+                                "function": {"name": "", "arguments": ""}
+                            }
+                        
+                        if tc.id: 
+                            tool_calls_buffer[idx]["id"] = tc.id
+                        if tc.function.name: 
+                            tool_calls_buffer[idx]["function"]["name"] += tc.function.name
+                        if tc.function.arguments: 
+                            tool_calls_buffer[idx]["function"]["arguments"] += tc.function.arguments
 
+            # Convert buffer to list
+            tool_calls = list(tool_calls_buffer.values())
+
+            # If no tools were called, we are done
             if not tool_calls:
                 break
 
+            # 1. Append Assistant's tool request to history
+            assistant_msg = {
+                "role": "assistant",
+                "content": full_content or None,
+                "tool_calls": [
+                    {
+                        "id": tc["id"], 
+                        "type": "function", 
+                        "function": tc["function"]
+                    } for tc in tool_calls
+                ]
+            }
+            current_messages.append(assistant_msg)
+
+            # 2. Execute tools and append results
             yield json.dumps({"type": "status", "content": "🛠️ Executing tools..."}) + "\n"
             
-            current_messages.append({
-                "role": "assistant",
-                "content": None,
-                "tool_calls": [{"id": tc["id"], "type": "function", "function": tc["function"]} for tc in tool_calls]
-            })
-
             for tc in tool_calls:
                 func_name = tc["function"]["name"]
                 args = tc["function"]["arguments"]
+                
+                # Logic check: Ensure execute_tool handles JSON string args internally
                 result_text = await mcp_manager.execute_tool(func_name, args)
                 
-                yield json.dumps({"type": "tool_result", "tool": func_name, "result": result_text}) + "\n"
+                yield json.dumps({
+                    "type": "tool_result", 
+                    "tool": func_name, 
+                    "result": result_text
+                }) + "\n"
                 
-                current_messages.append({"role": "tool", "tool_call_id": tc["id"], "content": result_text})
+                current_messages.append({
+                    "role": "tool", 
+                    "tool_call_id": tc["id"], 
+                    "content": str(result_text)
+                })
 
-        except APIConnectionError as e:
-            yield json.dumps({"type": "error", "content": f"Connection Error: {str(e)}"}) + "\n"
-            break
+            # The loop continues to send the tool results back to the LLM
+            
         except Exception as e:
-            yield json.dumps({"type": "error", "content": f"Unexpected error: {str(e)}"}) + "\n"
+            yield json.dumps({"type": "error", "content": f"Error: {str(e)}"}) + "\n"
             break
 
 # =======================================================
