@@ -1,84 +1,128 @@
-# AI Chat App
+# AI Chat Assistant
 
-This is a simple, yet powerful, chat application that connects to an OpenAI-compatible API and can be extended with custom tools using the *Master Control Program (MCP)*.
+A versatile, self-contained AI chat application featuring a modern web interface, multi-modal capabilities, and powerful tool integration through the Master Control Protocol (MCP).
+
+This application provides a seamless chat experience, allowing you to interact with OpenAI-compatible language models. It supports text, image, and audio inputs, and can be extended with custom tools to perform a wide range of tasks.
+
+![alt text](static/images/ui-screenshot.png)
 
 ## Features
 
-- **OpenAI Integration:** Connects to any OpenAI-compatible API for chat completions.
-- **Extensible Tooling:** Integrate custom tools via the MCP server. The application dynamically loads and makes these tools available to the language model.
-- **Web-Based UI:** A clean and simple web interface for chatting.
-- **Session Management:** Persists chat sessions and settings.
-- **Configuration:** Easily configure the application through a `data/saved_settings.json` file.
-- **Chat History:** Saves and loads chat history from `data/chat_history.json`.
+- **Multi-Modal Conversations:** Interact with the AI using text, images, and audio recordings.
+- **Extensible Tooling (MCP):** Dynamically connect to a **Master Control Protocol (MCP)** server to give the AI access to custom tools (e.g., file system access, web search, code execution).
+- **Rich Web Interface:** A clean, responsive, and feature-rich UI built with vanilla JavaScript and Tailwind CSS.
+- **Chat History:** Automatically saves conversation history, allowing you to load, rename, and delete previous chats.
+- **Real-time Streaming:** Responses from the AI are streamed in real-time for a smooth, interactive experience.
+- **Easy Configuration:** Configure the model, API keys, and MCP connection through the UI or environment variables.
+- **Dark/Light Mode:** Switch between themes to suit your preference.
+- **Standalone & Portable:** Runs locally with Python and a web browser.
 
-## How It Works
+## Architecture
 
-The application is composed of a few key components:
+The application consists of a Python backend and a JavaScript frontend, designed for modularity and ease of use.
 
-- **`app.py`:** A [FastAPI](https://fastapi.tiangolo.com/) backend that serves the web UI, handles chat sessions, and communicates with the OpenAI API.
-- **`static/index.html`:** The frontend of the application, written in HTML and JavaScript.
-- **`components/mcp_manager.py`:** A manager for the Master Control Program (MCP). This component is responsible for connecting to the MCP server, discovering available tools, and executing them.
-- **`components/config.py`:** Manages the application's configuration settings.
+```
++------------------------+      +-----------------------+
+|   Browser (Frontend)   |      |   Python (Backend)    |
+| (main.js, index.html)  |<---->| (app.py, FastAPI)     |
++------------------------+      +-----------------------+
+           ^                                |
+           |                                | (OpenAI API)
+           v                                v
++------------------------+      +-----------------------+
+|  User (Text, Images,   |      |   LLM Provider        |
+|  Audio)                |      | (e.g., Ollama, OpenAI)|
++------------------------+      +-----------------------+
+                                          ^
+                                          | (Tool Use)
+                                          v
++------------------------+      +-----------------------+
+|   MCP Server           |      |                       |
+| (External Tools)       |<---->|   MCP Manager         |
+| e.g., filesystem-mcp   |      | (mcp_manager.py)      |
++------------------------+      +-----------------------+
+```
 
-The general workflow is as follows:
-
-1.  The user opens the web UI.
-2.  The user configures the OpenAI API settings and the MCP command.
-3.  The user starts a chat session.
-4.  The backend connects to the MCP server and retrieves the list of available tools.
-5.  The backend sends the user's message, along with the list of tools, to the OpenAI API.
-6.  If the language model decides to use a tool, the backend executes the tool on the MCP server and sends the result back to the language model.
-7.  The language model's response is streamed back to the UI.
+1.  **Frontend:** A single-page application (`index.html`, `main.js`) that provides the chat interface. It communicates with the backend via a REST API.
+2.  **Backend:** A **FastAPI** server (`app.py`) that handles:
+    - Serving the web interface.
+    - Managing chat sessions and history.
+    - Orchestrating communication between the user, the LLM, and the MCP server.
+3.  **MCP Manager (`mcp_manager.py`):** A crucial component that connects to an external MCP server. It discovers the tools the server provides and makes them available to the language model.
+4.  **Configuration (`config.py`):** Manages settings from environment variables (`.env`) and a local JSON file (`data/saved_settings.json`).
 
 ## Getting Started
 
 ### Prerequisites
 
 - Python 3.7+
-- An OpenAI-compatible API key and base URL.
-- An MCP server to connect to (optional).
+- An OpenAI-compatible API. This can be the official OpenAI API or a local provider like [Ollama](https://ollama.com/).
+- (Optional) An MCP server for tool integration. For an example, see the [Filesystem MCP Server](https://github.com/model-context-protocol/mcp-server-filesystem-ts).
 
 ### Installation
 
-1.  Clone this repository:
+1.  **Clone the repository:**
     ```bash
-    git clone <repository-url>
+    git clone https://github.com/Jegatheesh001/AI-ChatBot.git chatbot
+    cd chatbot
     ```
-2.  Install the required Python packages:
+
+2.  **Install dependencies:**
     ```bash
     pip install -r requirements.txt
     ```
 
 ### Running the Application
 
-1.  Start the application:
+1.  **Set up your environment:**
+    Create a `.env` file in the project root. This is the recommended way to manage your credentials and settings.
+
+    ```env
+    # .env
+    
+    # Example for Ollama (local)
+    OPENAI_API_KEY="ollama"
+    OPENAI_BASE_URL="http://localhost:11434/v1"
+    OPENAI_MODEL="llama3"
+
+    # Example for OpenAI (cloud)
+    # OPENAI_API_KEY="sk-your-openai-api-key"
+    # OPENAI_BASE_URL="https://api.openai.com/v1"
+    # OPENAI_MODEL="gpt-4o-mini"
+    
+    # (Optional) Command to start your MCP tool server
+    # This will be executed by the backend on startup.
+    # MCP_COMMAND="npx -y @modelcontextprotocol/server-filesystem /path/to/your/workspace"
+    ```
+
+2.  **Run the server:**
     ```bash
     python app.py
     ```
-2.  Open your web browser and navigate to `http://localhost:8000`.
-3.  Configure the settings in the UI, including your OpenAI API key, base URL, and the MCP command if you have one.
-4.  Start chatting!
+    The application will automatically open in your default web browser at `http://localhost:8000`.
 
-## Configuration
+## How to Use
 
-The application can be configured through a `.env` file in the root of the project, or by editing the `data/saved_settings.json` file directly. The application loads settings with the following priority:
+### Basic Chat
 
-1.  `data/saved_settings.json`
-2.  `.env` file
-3.  Default values in `config.py`
+- Simply type your message in the input box and press Enter or click the send button.
+- The AI's response will be streamed back in real time.
 
-Create a `.env` file in the root of the project and add the following variables:
+### Multi-Modal Inputs
 
-```
-OPENAI_API_KEY="your-api-key"
-OPENAI_BASE_URL="your-base-url"
-OPENAI_MODEL="your-model"
-MCP_COMMAND="your-mcp-command"
-```
+- **Images:** Drag and drop images onto the page, paste them from your clipboard, or use the paperclip icon to upload them.
+- **Audio:** Click the microphone icon to record audio. Click it again to stop. You can then preview the audio before sending it.
 
-The following settings are available:
+### Tool Integration (MCP)
 
-- `openai_api_key`: Your OpenAI API key.
-- `openai_base_url`: The base URL of the OpenAI API.
-- `openai_model`: The model to use for chat completions.
-- `mcp_command`: The command to start the MCP server.
+1.  **Start an MCP Server:** Ensure you have an MCP-compatible tool server running or provide the command to start it in your `.env` file (see `MCP_COMMAND`).
+2.  **Connect the App:** The backend will automatically connect to the server on startup if `MCP_COMMAND` is set.
+3.  **Use Tools:** The AI will now have access to the tools provided by the MCP server. When a task requires a tool, the AI will automatically execute it and use the result to inform its response. You will see a "Used: <tool_name>" block in the chat when a tool is called.
+
+### Configuration Priority
+
+The application loads settings with the following priority, allowing for flexible configuration:
+
+1.  **UI Settings (`data/saved_settings.json`):** Settings saved via the UI's "Configuration" menu have the highest priority.
+2.  **Environment Variables (`.env` file):** Settings defined in the `.env` file are loaded next.
+3.  **Default Values:** Fallback default values are defined in `components/config.py`.
