@@ -195,6 +195,11 @@ async function sendMessage() {
     
     if (!text && currentFiles.length === 0) return;
 
+    if (window.location.search !== '?chat=' + sessionId) {
+        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?chat=' + sessionId;
+        window.history.pushState({path: newUrl}, '', newUrl);
+    }
+
     const filesToSend = [...currentFiles];
     const userTimestamp = Date.now();
     const userMsgId = addMessageToUI('user', text, filesToSend, userTimestamp);
