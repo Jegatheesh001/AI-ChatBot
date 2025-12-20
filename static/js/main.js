@@ -195,11 +195,6 @@ async function sendMessage() {
     
     if (!text && currentFiles.length === 0) return;
 
-    if (window.location.search !== '?chat=' + sessionId) {
-        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?chat=' + sessionId;
-        window.history.pushState({path: newUrl}, '', newUrl);
-    }
-
     const filesToSend = [...currentFiles];
     const userTimestamp = Date.now();
     const userMsgId = addMessageToUI('user', text, filesToSend, userTimestamp);
@@ -208,6 +203,8 @@ async function sendMessage() {
     updateFilePreview();
     input.value = '';
     input.style.height = 'auto';
+
+    stopSpeaking();
 
     const isNewChat = !chatHistory[sessionId];
 
@@ -218,6 +215,9 @@ async function sendMessage() {
         const newTitle = text.substring(0, 35) + (text.length > 35 ? '...' : '');
         chatHistory[sessionId].title = newTitle;
         renderSidebar();
+        // Update URL with new chat ID
+        const newUrl = window.location.protocol + "//" + window.location.host + window.location.pathname + '?chat=' + sessionId;
+        window.history.pushState({path: newUrl}, '', newUrl);
     }
 
     const emptyState = document.getElementById('empty-state');
@@ -303,6 +303,12 @@ async function sendMessage() {
         contentDiv.innerHTML = fullResponse;
     } finally {
         await saveToHistory('assistant', fullResponse, [], assistantMsgId, assistantTimestamp);
+        
+        // Speak the text content of the response
+        if (filesToSend.length > 0 && text.length === 0 && fullResponse && !fullResponse.includes('Error:')) {
+            speakText(fullResponse); 
+        }
+        
         document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
     }
 }
@@ -612,6 +618,8 @@ async function toggleRecording() {
         document.getElementById('mic-icon').classList.remove('text-red-500', 'animate-pulse');
     } else {
         try {
+            stopSpeaking(); // Stop any ongoing speech synthesis
+
             const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
             
             // 1. Let browser pick the best format
@@ -806,3 +814,121 @@ document.getElementById('user-input').addEventListener('paste', (event) => {
         }
     }
 });
+
+// ------------------------------
+// Speech Recognition & TTS
+// ------------------------------
+
+// --- SPEECH STATE ---
+const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition;
+let isTTSActive = true; // Toggle this to enable/disable auto-speaking
+
+if (SpeechRecognition) {
+    recognition = new SpeechRecognition();
+    recognition.continuous = false;
+    recognition.interimResults = true;
+    recognition.lang = 'en-US';
+}
+
+async function startDictation() {
+    if (!recognition) return alert("Speech recognition not supported in this browser.");
+
+    const inputField = document.getElementById('user-input');
+    const micIcon = document.getElementById('mic-icon');
+    
+    recognition.start();
+    micIcon.classList.add('text-red-500', 'animate-pulse');
+
+    recognition.onresult = (event) => {
+        const transcript = Array.from(event.results)
+            .map(result => result[0])
+            .map(result => result.transcript)
+            .join('');
+
+        inputField.value = transcript;
+        autoResize(inputField);
+    };
+
+    recognition.onend = () => {
+        micIcon.classList.remove('text-red-500', 'animate-pulse');
+    };
+
+    recognition.onerror = (event) => {
+        console.error("Speech Recognition Error:", event.error);
+        micIcon.classList.remove('text-red-500', 'animate-pulse');
+    };
+}
+
+// Language detection logic
+function getLanguageCode(text) {
+    const scriptPatterns = {
+        'ta-IN': /[\u0B80-\u0BFF]/,         // Tamil
+        'zh-CN': /[\u4e00-\u9fa5]/,         // Chinese
+        'hi-IN': /[\u0900-\u097F]/,         // Hindi
+        'ar-SA': /[\u0600-\u06FF]/,         // Arabic
+        'ja-JP': /[\u3040-\u30ff]/,         // Japanese
+        'ru-RU': /[\u0400-\u04FF]/,         // Cyrillic (Russian)
+        'en-US': /^[A-Za-z0-9\s\.,!?'"()]+$/
+    };
+
+    for (const [lang, pattern] of Object.entries(scriptPatterns)) {
+        if (pattern.test(text)) {
+            console.log("Detected language:", lang);
+            return lang;
+        }
+    }
+    
+    return 'en-US'; // Default
+}
+
+let availableVoices = [];
+
+// --- REWRITTEN speakText ---
+function speakText(text) {
+    if (!isTTSActive || !text) return;
+
+    // 1. Force-stop any ongoing speech (crucial for Chromium)
+    window.speechSynthesis.cancel();
+
+    // 2. Detect language using your multi-layered logic
+    const detectedLang = getLanguageCode(text); 
+    
+    // 3. Create the utterance with the clean text
+    const utterance = new SpeechSynthesisUtterance(text);
+    
+    // 4. Use the cached voices (loaded via the listener below)
+    const voices = window.speechSynthesis.getVoices();
+    
+    // 5. Intelligent Voice Matching
+    // Priority: 1. Exact match (ta-IN) -> 2. Language match (ta) -> 3. Fallback
+    const exactMatch = voices.find(v => v.lang === detectedLang);
+    const langMatch = voices.find(v => v.lang.startsWith(detectedLang.split('-')[0]));
+    const matchingVoice = exactMatch || langMatch;
+
+    if (matchingVoice) {
+        utterance.voice = matchingVoice;
+        utterance.lang = matchingVoice.lang;
+    } else {
+        utterance.lang = detectedLang || 'en-US'; 
+    }
+
+    // 6. Set properties for better clarity
+    if(detectedLang === 'ta-IN') {
+        utterance.rate = 1.5;  // 0.1 to 10
+        utterance.pitch = 1.0; // 0 to 2
+    } else {
+        utterance.rate = 1.0;  // 0.1 to 10
+        utterance.pitch = 1.0; // 0 to 2
+    }
+
+    // 7. Execute
+    window.speechSynthesis.speak(utterance);
+}
+
+// Add this to stop speech if the user starts a new chat or cancels
+function stopSpeaking() {
+    if (SpeechRecognition) {
+        window.speechSynthesis.cancel();
+    }
+}
