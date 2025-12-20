@@ -12,11 +12,46 @@ from pydantic import BaseModel
 from openai import AsyncOpenAI, APIConnectionError
 from components.mcp_manager import MCPManager
 import components.config as config
+from contextlib import asynccontextmanager
+
+# Initialize MCP Manager
+mcp_manager = None
+async def initialize_mcp():
+    global mcp_manager
+    
+    old_tools = None
+    if mcp_manager:
+        old_tools = mcp_manager.get_openai_tools()
+    
+    mcp_manager = MCPManager()
+    mcp_cmd = current_settings.get("mcp_command")
+    if mcp_cmd:
+        try:
+            print(f"🔌 Connecting to MCP server...")
+            await mcp_manager.connect(mcp_cmd)
+            print(f"✅ MCP connection successful.")
+        except APIConnectionError:
+            print(f"❌ MCP connection failed. Please check your MCP command.")
+    elif old_tools:
+        mcp_manager = MCPManager()
+        print(f"❌ MCP connection resetted.")
+    else:
+        print(f"⚠️ No MCP command found.")
+    return
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # This runs ONCE when the app starts
+    global mcp_manager
+    await initialize_mcp() 
+    yield
+    # This runs ONCE when the app stops
+    print(f"❌ Application Stopped")
 
 # =======================================================
 # 🚀 APP SETUP
 # =======================================================
-app = FastAPI(title="MCP Chat App")
+app = FastAPI(title="AI Chat App", lifespan=lifespan)
 
 # 1. Mount Static Files (CSS/JS if you separate them later)
 script_dir = os.path.dirname(__file__)
@@ -101,31 +136,28 @@ async def get_or_create_session(session_id: str, new_settings: dict = None):
 
     # 2. If session doesn't exist OR settings changed, (re)initialize
     if session_id not in sessions or settings_changed:
-        # Cleanup existing MCP connection if re-initializing
-        if session_id in sessions and "mcp_manager" in sessions[session_id]:
-            print(f"🔄 Re-initializing session {session_id} with new settings...")
-            # If your MCPManager has a disconnect/close method, call it here
-            # await sessions[session_id]["mcp_manager"].disconnect()
+        await createNewSession(session_id)
+    
+    return sessions[session_id]
 
-        client = AsyncOpenAI(
-            api_key=current_settings.get("openai_api_key"),
-            base_url=current_settings.get("openai_base_url"),
-        )
-        
-        mcp_manager = MCPManager()
-        mcp_cmd = current_settings.get("mcp_command")
-        
-        if mcp_cmd:
-            print(f"🔌 Connecting MCP for session {session_id}...")
-            await mcp_manager.connect(mcp_cmd)
-            
+async def createNewSession(session_id : str):
+    client = AsyncOpenAI(
+        api_key=current_settings.get("openai_api_key"),
+        base_url=current_settings.get("openai_base_url"),
+    )
+    if session_id not in sessions: 
         sessions[session_id] = {
             "client": client,
             "mcp_manager": mcp_manager,
             "model": current_settings.get("openai_model", "gpt-4o"),
         }
-    
-    return sessions[session_id]
+    else:
+        sessions[session_id].update({
+            "client": client,
+            "mcp_manager": mcp_manager,
+            "model": current_settings.get("openai_model"),
+        })
+    return
 
 # =======================================================
 # 🔄 STREAMING LOGIC
@@ -239,6 +271,33 @@ async def serve_ui(request: Request):
 async def get_settings():
     """Returns the current application settings."""
     return current_settings
+
+@app.post("/settings")
+async def update_settings(request: dict):
+    global current_settings
+    
+    settings_changed = False
+    new_settings = request.get("settings", {})
+    critical_keys = ["openai_api_key", "openai_base_url", "mcp_command", "openai_model"]
+    for key in critical_keys:
+        if new_settings.get(key) != current_settings.get(key):
+            settings_changed = True
+            break
+    
+    if settings_changed:
+        mcp_changed = new_settings.get("mcp_command") != current_settings.get("mcp_command")
+        
+        current_settings.update(new_settings)
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(current_settings, f, indent=4)
+        print("💾 Settings synchronized and saved to data/saved_settings.json")
+        
+    if mcp_changed:
+        print("🔄 Re-initializing MCP Manager with new command...")
+        await initialize_mcp()
+    
+    if  settings_changed and "session_id" in request:
+        await createNewSession(request.get("session_id"))
 
 @app.get("/history")
 async def get_history():
