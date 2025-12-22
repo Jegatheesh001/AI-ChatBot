@@ -25,6 +25,14 @@ async def initialize_mcp():
     
     mcp_manager = MCPManager()
     mcp_cmd = current_settings.get("mcp_command")
+    
+    if current_settings.get("mcp_enabled") is False:
+        if old_tools:
+            print(f"❌ MCP is disabled.")
+        else:
+            print(f"⚠️ MCP not enabled")
+        return
+    
     if mcp_cmd:
         try:
             print(f"🔌 Connecting to MCP server...")
@@ -33,7 +41,6 @@ async def initialize_mcp():
         except APIConnectionError:
             print(f"❌ MCP connection failed. Please check your MCP command.")
     elif old_tools:
-        mcp_manager = MCPManager()
         print(f"❌ MCP connection resetted.")
     else:
         print(f"⚠️ No MCP command found.")
@@ -86,6 +93,8 @@ def load_persistent_settings():
     # Priority 2 & 3: Fallback to .env or system defaults
     print("🌿 Priority 2/3: Loading from .env or Defaults")
     initial_settings = asyncio.run(config.setup_chat_settings())
+    if (initial_settings.get("mcp_enabled") is None):
+        initial_settings["mcp_enabled"] = False
     
     # Ensure data directory exists and initialize the JSON file
     os.makedirs("data", exist_ok=True)
@@ -118,24 +127,8 @@ class HistorySaveRequest(BaseModel):
 async def get_or_create_session(session_id: str, new_settings: dict = None):
     global current_settings
     
-    # 1. Update persistent file and global state if UI provides new data
-    settings_changed = False
-    if new_settings:
-        # Check if critical settings actually changed to avoid unnecessary re-initialization
-        critical_keys = ["openai_api_key", "openai_base_url", "mcp_command", "openai_model"]
-        for key in critical_keys:
-            if new_settings.get(key) != current_settings.get(key):
-                settings_changed = True
-                break
-        
-        if settings_changed:
-            current_settings.update(new_settings)
-            with open(SETTINGS_FILE, "w") as f:
-                json.dump(current_settings, f, indent=4)
-            print("💾 Settings synchronized and saved to data/saved_settings.json")
-
-    # 2. If session doesn't exist OR settings changed, (re)initialize
-    if session_id not in sessions or settings_changed:
+    # If session doesn't exist then initialize
+    if session_id not in sessions:
         await createNewSession(session_id)
     
     return sessions[session_id]
@@ -272,20 +265,28 @@ async def get_settings():
     """Returns the current application settings."""
     return current_settings
 
+@app.get("/tools")
+async def get_tools():
+    """Returns the available tools."""
+    if mcp_manager:
+        return mcp_manager.get_openai_tools()
+    return []
+
 @app.post("/settings")
 async def update_settings(request: dict):
     global current_settings
     
     settings_changed = False
+    mcp_changed = False
     new_settings = request.get("settings", {})
-    critical_keys = ["openai_api_key", "openai_base_url", "mcp_command", "openai_model"]
+    critical_keys = ["openai_api_key", "openai_base_url", "mcp_command", "openai_model", "mcp_enabled"]
     for key in critical_keys:
         if new_settings.get(key) != current_settings.get(key):
             settings_changed = True
             break
     
     if settings_changed:
-        mcp_changed = new_settings.get("mcp_command") != current_settings.get("mcp_command")
+        mcp_changed = new_settings.get("mcp_command") != current_settings.get("mcp_command") or new_settings.get("mcp_enabled") != current_settings.get("mcp_enabled")
         
         current_settings.update(new_settings)
         with open(SETTINGS_FILE, "w") as f:

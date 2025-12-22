@@ -53,6 +53,22 @@
         
         #settings-modal { background-color: rgba(0,0,0,0.5); }
         .dark #settings-modal { background-color: rgba(0,0,0,0.7); }
+
+        /* MCP Toggle Switch Styles */
+        .toggle-checkbox:checked {
+            right: 0;
+            border-color: #4f46e5; /* indigo-600 */
+        }
+        .toggle-checkbox:checked + .toggle-label {
+            background-color: #4f46e5; /* indigo-600 */
+        }
+        .toggle-checkbox {
+            right: 1rem;
+            transition: all 0.3s;
+        }
+        .toggle-label {
+            transition: background-color 0.3s;
+        }
     </style>
 </head>
 <body class="bg-gray-50 dark:bg-gray-800 h-screen max-h-screen overflow-hidden flex text-slate-800 dark:text-slate-200 font-sans">
@@ -176,6 +192,18 @@
                     <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">Base URL</label>
                     <input type="text" id="setting-base-url" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
                 </div>
+                <div class="flex items-center justify-between">
+                    <label for="mcp-enabled" class="block text-sm font-semibold text-gray-700 dark:text-gray-300">Enable MCP</label>
+                    <div class="flex items-center">
+                        <button id="tools-icon" class="text-gray-400 hover:text-white transition-colors p-1 hidden" title="Tools">
+                            <i class="ph ph-wrench text-xl"></i>
+                        </button>
+                        <div class="relative inline-block w-10 mr-2 align-middle select-none transition duration-200 ease-in">
+                            <input type="checkbox" name="mcp-enabled" id="mcp-enabled" class="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer"/>
+                            <label for="mcp-enabled" class="toggle-label block overflow-hidden h-6 rounded-full bg-gray-300 cursor-pointer"></label>
+                        </div>
+                    </div>
+                </div>
                 <div>
                     <label class="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">MCP Command</label>
                     <input type="text" id="setting-mcp" placeholder="eg. java -jar /file-path/my-mcp.jar" class="w-full border rounded-lg px-3 py-2 bg-gray-50 dark:bg-gray-700 border-gray-300 dark:border-gray-600 focus:ring-2 focus:ring-indigo-500 outline-none text-gray-800 dark:text-gray-200">
@@ -184,6 +212,24 @@
             <div class="p-6 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-end gap-3">
                 <button onclick="closeSettings()" class="px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white font-medium">Cancel</button>
                 <button onclick="saveSettings()" class="px-5 py-2 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 shadow-sm transition-all">Save Changes</button>
+            </div>
+        </div>
+    </div>
+    <div id="tools-modal" class="fixed inset-0 z-50 flex items-center justify-center hidden p-4">
+        <div class="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden transform transition-all scale-95 opacity-0 duration-200" id="tools-modal-content">
+            <div class="p-6 border-b dark:border-gray-700 flex justify-between items-center bg-gray-50 dark:bg-gray-900/50">
+                <h3 class="font-bold text-lg flex items-center gap-2 text-gray-800 dark:text-gray-100">
+                    <i class="ph ph-wrench text-indigo-600"></i> Available Tools
+                </h3>
+                <button onclick="closeTools()" class="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors">
+                    <i class="ph ph-x text-2xl"></i>
+                </button>
+            </div>
+            <div id="tools-list" class="p-6 space-y-4 bg-white dark:bg-gray-800">
+                <!-- Tools will be populated here -->
+            </div>
+            <div class="p-6 border-t dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 flex justify-end gap-3">
+                <button onclick="closeTools()" class="px-4 py-2 text-gray-600 dark:text-gray-300 hover:text-gray-800 dark:hover:text-white font-medium">Close</button>
             </div>
         </div>
     </div>

@@ -61,7 +61,7 @@ async function fetchChatHistory() {
             throw new Error(`Server returned status: ${response.status}`);
         }
         chatHistory = await response.json();
-        console.log("✅ Chat history successfully loaded from server.", chatHistory);
+        console.log("✅ Chat history successfully loaded from server. No of chats:", Object.keys(chatHistory).length);
     } catch (err) {
         console.error("⚠️ Failed to load chat history from server:", err);
         chatHistory = {};
@@ -81,15 +81,16 @@ async function fetchCurrentSettings() {
             model: serverSettings.openai_model || '',
             apiKey: serverSettings.openai_api_key || '',
             baseUrl: serverSettings.openai_base_url || '',
-            mcpCommand: serverSettings.mcp_command || ''
+            mcpCommand: serverSettings.mcp_command || '',
+            mcpEnabled: serverSettings.mcp_enabled
         };
         
-        console.log("✅ Settings successfully loaded from server.", configSettings.model);
+        console.log("✅ Settings successfully loaded from server.", { model: configSettings.model, baseUrl: configSettings.baseUrl, mcpCommand: configSettings.mcpCommand, mcpEnabled: configSettings.mcpEnabled });
 
     } catch (err) {
         console.error("⚠️ Failed to load settings from server:", err);
         // Fallback to empty settings if the server is unreachable
-        configSettings = { model: '', apiKey: '', baseUrl: '', mcpCommand: '' };
+        configSettings = { model: '', apiKey: '', baseUrl: '', mcpCommand: '', mcpEnabled: false };
     }
 }
 
@@ -116,14 +117,57 @@ function openSettings() {
     document.getElementById('setting-api-key').value = configSettings.apiKey;
     document.getElementById('setting-base-url').value = configSettings.baseUrl;
     document.getElementById('setting-mcp').value = configSettings.mcpCommand;
+    document.getElementById('mcp-enabled').checked = configSettings.mcpEnabled;
     
     document.getElementById('settings-modal').classList.remove('hidden');
     setTimeout(() => document.getElementById('modal-content').classList.remove('scale-95', 'opacity-0'), 10);
+
+    handleMcpToggle();
 }
 
 function closeSettings() {
     document.getElementById('modal-content').classList.add('scale-95', 'opacity-0');
     setTimeout(() => document.getElementById('settings-modal').classList.add('hidden'), 200);
+}
+
+function openTools() {
+    document.getElementById('tools-modal').classList.remove('hidden');
+    setTimeout(() => document.getElementById('tools-modal-content').classList.remove('scale-95', 'opacity-0'), 10);
+    fetchAndShowTools();
+}
+
+function closeTools() {
+    document.getElementById('tools-modal-content').classList.add('scale-95', 'opacity-0');
+    setTimeout(() => document.getElementById('tools-modal').classList.add('hidden'), 200);
+}
+
+async function fetchAndShowTools() {
+    try {
+        const response = await fetch('/tools');
+        if (!response.ok) {
+            throw new Error(`Server returned status: ${response.status}`);
+        }
+        const tools = await response.json();
+        const toolsList = document.getElementById('tools-list');
+        toolsList.innerHTML = '';
+        if (tools.length === 0) {
+            toolsList.innerHTML = '<p class="text-gray-400">No tools available.</p>';
+            return;
+        }
+        tools.forEach(tool => {
+            const toolHtml = `
+                <div class="p-4 bg-gray-100 dark:bg-gray-700 rounded-lg">
+                    <h4 class="font-bold text-lg text-gray-800 dark:text-gray-100">${tool.function.name}</h4>
+                    <p class="text-sm text-gray-600 dark:text-gray-300">${tool.function.description}</p>
+                </div>
+            `;
+            toolsList.insertAdjacentHTML('beforeend', toolHtml);
+        });
+    } catch (err) {
+        console.error("⚠️ Failed to load tools from server:", err);
+        const toolsList = document.getElementById('tools-list');
+        toolsList.innerHTML = '<p class="text-red-500">Failed to load tools.</p>';
+    }
 }
 
 async function saveSettings() {
@@ -132,7 +176,8 @@ async function saveSettings() {
         model: document.getElementById('setting-model').value,
         apiKey: document.getElementById('setting-api-key').value,
         baseUrl: document.getElementById('setting-base-url').value,
-        mcpCommand: document.getElementById('setting-mcp').value
+        mcpCommand: document.getElementById('setting-mcp').value,
+        mcpEnabled: document.getElementById('mcp-enabled').checked
     };
     
     // Persist to backend Priority 1 (saved_settings.json) and re-init session
@@ -140,10 +185,14 @@ async function saveSettings() {
         openai_model: configSettings.model,
         openai_api_key: configSettings.apiKey,
         openai_base_url: configSettings.baseUrl,
-        mcp_command: configSettings.mcpCommand
+        mcp_command: configSettings.mcpCommand,
+        mcp_enabled: configSettings.mcpEnabled
     });
     closeSettings();
 }
+
+document.getElementById('mcp-enabled').addEventListener('change', handleMcpToggle);
+document.getElementById('tools-icon').addEventListener('click', openTools);
 
 async function syncSettingsWithServer(newSettings) {
     try {
@@ -801,6 +850,16 @@ function updateFilePreview() {
 function removeFile(index) {
     currentFiles.splice(index, 1);
     updateFilePreview();
+}
+
+function handleMcpToggle() {
+    const mcpEnabled = document.getElementById('mcp-enabled').checked;
+    const toolsIcon = document.getElementById('tools-icon');
+    if (mcpEnabled && toolsIcon.classList.contains('hidden')) {
+        toolsIcon.classList.remove('hidden');
+    } else if (!mcpEnabled && !toolsIcon.classList.contains('hidden')) {
+        toolsIcon.classList.add('hidden');
+    }
 }
 
 document.getElementById('user-input').addEventListener('paste', (event) => {
