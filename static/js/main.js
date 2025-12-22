@@ -188,7 +188,7 @@ async function saveSettings() {
         mcp_command: configSettings.mcpCommand,
         mcp_enabled: configSettings.mcpEnabled
     });
-    closeSettings();
+    // closeSettings();
 }
 
 document.getElementById('mcp-enabled').addEventListener('change', handleMcpToggle);
@@ -196,6 +196,10 @@ document.getElementById('tools-icon').addEventListener('click', openTools);
 
 async function syncSettingsWithServer(newSettings) {
     try {
+        let btnObj = document.getElementById('settings-save-btn');
+        btnObj.disabled = true;
+        let btnLabel = btnObj.innerText;
+        btnObj.innerText = 'Updating...';
         await fetch('/settings', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -204,6 +208,8 @@ async function syncSettingsWithServer(newSettings) {
                 settings: newSettings
             })
         });
+        btnObj.disabled = false;
+        btnObj.innerText = btnLabel;
     } catch (err) { console.error("Sync error:", err); }
 }
 
