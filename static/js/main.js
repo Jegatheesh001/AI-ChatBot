@@ -992,13 +992,26 @@ function speakText(text) {
         utterance.pitch = 1.0; // 0 to 2
     }
 
+    // Update UI when speaking starts
+    utterance.onstart = () => {
+        const indicator = document.getElementById('tts-indicator');
+        if (indicator) indicator.classList.remove('hidden');
+        if (indicator) indicator.classList.add('flex');
+    };
+
+    // Update UI when speaking ends
+    utterance.onend = () => {
+        const indicator = document.getElementById('tts-indicator');
+        if (indicator) indicator.classList.add('hidden');
+    };
+
     // 7. Execute
     window.speechSynthesis.speak(utterance);
 }
 
 // Add this to stop speech if the user starts a new chat or cancels
 function stopSpeaking() {
-    if (SpeechRecognition) {
-        window.speechSynthesis.cancel();
-    }
+    window.speechSynthesis.cancel();
+    const indicator = document.getElementById('tts-indicator');
+    if (indicator) indicator.classList.add('hidden');
 }
