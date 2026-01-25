@@ -361,7 +361,29 @@ async function sendMessage() {
         
         // Speak the text content of the response
         if (filesToSend.length > 0 && text.length === 0 && fullResponse && !fullResponse.includes('Error:')) {
-            speakText(fullResponse); 
+            // Include only assistant content in the readout logic.
+            // Remove tool results/thinking blocks from the text to be spoken.
+            const tempDiv = document.createElement('div');
+            tempDiv.innerHTML = fullResponse;
+            
+            // Remove thinking/tool_result blocks
+            const blocksToRemove = tempDiv.querySelectorAll('details, p[id^="thinking-"]');
+            blocksToRemove.forEach(block => block.remove());
+            
+            let cleanText = tempDiv.innerText || tempDiv.textContent;
+            
+            // Remove remaining markdown patterns that innerText might leave behind
+            // like [text](url), etc. although innerText usually handles most of it.
+            // Also common characters like *, #, etc.
+            cleanText = cleanText.replace(/#+\s+/g, '') // Remove headers
+                               .replace(/(\*\*|__)(.*?)\1/g, '$2') // Remove bold
+                               .replace(/(\*|_)(.*?)\1/g, '$2') // Remove italic
+                               .replace(/`{1,3}.*?`{1,3}/gs, '') // Remove inline code and code blocks
+                               .replace(/\[([^\]]+)\]\([^\)]+\)/g, '$1') // Remove links but keep text
+                               .replace(/!\[([^\]]*)\]\([^\)]+\)/g, '') // Remove images
+                               .replace(/>\s+/g, ''); // Remove blockquotes
+
+            speakText(cleanText); 
         }
         
         document.getElementById('send-btn').disabled = document.getElementById('user-input').value.trim() === '' && currentFiles.length === 0;
