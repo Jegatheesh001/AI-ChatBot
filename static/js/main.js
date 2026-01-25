@@ -691,10 +691,12 @@ async function toggleRecording() {
                 if (event.data.size > 0) audioChunks.push(event.data);
             });
 
-            mediaRecorder.addEventListener('stop', () => {
+            mediaRecorder.addEventListener('stop', async () => {
                 // 3. Use the captured mimeType here
                 audioBlob = new Blob(audioChunks, { type: recordedMimeType || 'audio/webm' });
                 
+                /* 
+                // Playback option (commented out to auto-send)
                 const audioUrl = URL.createObjectURL(audioBlob);
                 const player = document.getElementById('audio-player');
                 player.src = audioUrl;
@@ -703,7 +705,10 @@ async function toggleRecording() {
                 document.getElementById('audio-playback').classList.remove('hidden');
                 
                 // Stop all tracks to release the microphone
-                stream.getTracks().forEach(track => track.stop());
+                stream.getTracks().forEach(track => track.stop()); */
+
+                // Auto-send the audio
+                await sendAudio();
             });
         } catch (err) {
             console.error("Error accessing microphone:", err);
