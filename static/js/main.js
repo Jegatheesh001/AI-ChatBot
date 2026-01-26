@@ -101,13 +101,24 @@ function toggleTheme() {
 }
 
 function toggleSidebar() {
-    const sb = document.getElementById('sidebar'), mc = document.getElementById('main-content');
-    if (sb.classList.contains('sidebar-expanded')) {
-        sb.classList.replace('sidebar-expanded', 'sidebar-slim');
-        mc.classList.replace('content-expanded', 'content-slim');
+    const sb = document.getElementById('sidebar'), 
+          mc = document.getElementById('main-content'),
+          overlay = document.getElementById('sidebar-overlay');
+    
+    const isMobile = window.innerWidth <= 768;
+
+    if (isMobile) {
+        const isOpen = sb.classList.toggle('mobile-open');
+        overlay.classList.toggle('hidden', !isOpen);
+        overlay.classList.toggle('active', isOpen);
     } else {
-        sb.classList.replace('sidebar-slim', 'sidebar-expanded');
-        mc.classList.replace('content-slim', 'content-expanded');
+        if (sb.classList.contains('sidebar-expanded')) {
+            sb.classList.replace('sidebar-expanded', 'sidebar-slim');
+            mc.classList.replace('content-expanded', 'content-slim');
+        } else {
+            sb.classList.replace('sidebar-slim', 'sidebar-expanded');
+            mc.classList.replace('content-slim', 'content-expanded');
+        }
     }
 }
 
